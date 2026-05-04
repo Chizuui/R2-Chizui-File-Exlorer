@@ -5,6 +5,8 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
 ## 🚀 Features
 
 - **File Management**: Upload, download, and delete files with ease.
+- **Fast Upload Path**: Browser uploads directly to R2 using presigned URLs for better throughput.
+- **Parallel Uploads + Progress**: Multi-file upload with parallel workers and real-time progress bar.
 - **Folder Support**: Create and manage folders (prefixes) to organize your storage.
 - **File Search**: Real-time search functionality to find your files quickly.
 - **Previews**: Built-in preview support for images, videos, audio, and PDF files.
@@ -45,12 +47,34 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
    - `USERNAME`: The username for dashboard access.
    - `PASSWORD`: The password for dashboard access.
    - `SECRET_KEY`: A strong random string used for signing authentication cookies.
+   - `R2_ACCOUNT_ID`: Your Cloudflare account ID.
+   - `R2_ACCESS_KEY_ID`: R2 S3 API access key ID.
+   - `R2_SECRET_ACCESS_KEY`: R2 S3 API secret access key.
+   - `R2_BUCKET_NAME` (optional): Bucket name used for presigned upload (defaults to `chizui-files` in code).
 
    You can set these using Wrangler:
    ```bash
    npx wrangler secret put USERNAME
    npx wrangler secret put PASSWORD
    npx wrangler secret put SECRET_KEY
+   npx wrangler secret put R2_ACCOUNT_ID
+   npx wrangler secret put R2_ACCESS_KEY_ID
+   npx wrangler secret put R2_SECRET_ACCESS_KEY
+   npx wrangler secret put R2_BUCKET_NAME
+   ```
+
+3. **R2 CORS Policy (Required for Browser Direct Upload)**:
+   In your bucket settings, set CORS policy like this (adjust your domain):
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://files.chizui.dev"],
+       "AllowedMethods": ["GET", "HEAD", "PUT"],
+       "AllowedHeaders": ["*"],
+       "ExposeHeaders": ["ETag"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
    ```
 
 ## 💻 Local Development
@@ -70,6 +94,10 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
    USERNAME=admin
    PASSWORD=yourpassword
    SECRET_KEY=your-secret-key
+   R2_ACCOUNT_ID=your-account-id
+   R2_ACCESS_KEY_ID=your-r2-access-key-id
+   R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+   R2_BUCKET_NAME=your-bucket-name
    ```
 
 ## 🚢 Deployment

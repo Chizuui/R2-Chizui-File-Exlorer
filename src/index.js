@@ -1,3 +1,5 @@
+import { AwsClient } from "aws4fetch";
+
 const COOKIE_NAME = "chizui_upload_login";
 
 // Ubah ini kalau mau limit storage beda
@@ -60,29 +62,130 @@ export default {
         return new Response("Unauthorized. Login dulu untuk upload.", { status: 401 });
       }
 
-      const formData = await request.formData();
-      const files = formData.getAll("files");
-      const prefix = formData.get("prefix") || "";
+      try {
+        const formData = await request.formData();
+        const files = formData.getAll("files");
+        const prefix = formData.get("prefix") || "";
 
-      if (!files || files.length === 0) {
-        return new Response("No files uploaded", { status: 400 });
+        if (!files || files.length === 0) {
+          return new Response("No files uploaded", { status: 400 });
+        }
+
+        const cleanPrefix = sanitizePrefix(prefix);
+
+        for (const file of files) {
+          if (typeof file === "string") continue;
+          const key = cleanPrefix + file.name;
+
+          // Stream file directly to R2 to reduce memory pressure on large uploads.
+          await env.BUCKET.put(key, file.stream(), {
+            httpMetadata: {
+              contentType: file.type || guessContentType(file.name)
+            }
+          });
+        }
+
+        return Response.redirect(url.origin + "/?prefix=" + encodeURIComponent(cleanPrefix), 302);
+      } catch (error) {
+        console.error("Upload failed:", error);
+        return new Response("Upload gagal. Coba file lebih kecil atau upload satu per satu.", { status: 500 });
+      }
+    }
+
+    // DIRECT UPLOAD (faster path: no multipart parsing in Worker)
+    if (request.method === "POST" && url.pathname === "/upload-direct") {
+      if (!(await isLoggedIn(request, env))) {
+        return new Response("Unauthorized. Login dulu untuk upload.", { status: 401 });
       }
 
-      const cleanPrefix = sanitizePrefix(prefix);
+      const keyParam = url.searchParams.get("key");
+      const prefixParam = url.searchParams.get("prefix") || "";
+      const fileType = request.headers.get("content-type") || "application/octet-stream";
 
-      for (const file of files) {
-        if (typeof file === "string") continue;
-        const key = cleanPrefix + file.name;
-        const buffer = await file.arrayBuffer();
+      if (!keyParam) {
+        return new Response("Key required", { status: 400 });
+      }
 
-        await env.BUCKET.put(key, buffer, {
+      const cleanPrefix = sanitizePrefix(prefixParam);
+      const safeName = keyParam.replace(/^\/+/, "").split("/").pop();
+      if (!safeName) {
+        return new Response("Invalid file name", { status: 400 });
+      }
+
+      const objectKey = cleanPrefix + safeName;
+
+      try {
+        await env.BUCKET.put(objectKey, request.body, {
           httpMetadata: {
-            contentType: file.type || guessContentType(file.name)
+            contentType: fileType
           }
         });
+        return new Response("OK", { status: 200 });
+      } catch (error) {
+        console.error("Direct upload failed:", error);
+        return new Response("Upload gagal", { status: 500 });
+      }
+    }
+
+    // PRESIGNED URL for direct browser -> R2 upload
+    if (request.method === "POST" && url.pathname === "/upload-presign") {
+      if (!(await isLoggedIn(request, env))) {
+        return new Response("Unauthorized. Login dulu untuk upload.", { status: 401 });
       }
 
-      return Response.redirect(url.origin + "/?prefix=" + encodeURIComponent(cleanPrefix), 302);
+      const accountId = env.R2_ACCOUNT_ID;
+      const accessKeyId = env.R2_ACCESS_KEY_ID;
+      const secretAccessKey = env.R2_SECRET_ACCESS_KEY;
+      const bucketName = env.R2_BUCKET_NAME || "chizui-files";
+
+      if (!accountId || !accessKeyId || !secretAccessKey) {
+        return new Response("R2 presign secrets belum diset (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY).", { status: 500 });
+      }
+
+      try {
+        const payload = await request.json();
+        const filename = String(payload?.filename || "");
+        const prefix = String(payload?.prefix || "");
+        const requestedType = String(payload?.contentType || "");
+        const contentType = requestedType || guessContentType(filename);
+
+        const safeName = filename.replace(/^\/+/, "").split("/").pop();
+        if (!safeName) {
+          return new Response("Filename invalid", { status: 400 });
+        }
+
+        const cleanPrefix = sanitizePrefix(prefix);
+        const key = cleanPrefix + safeName;
+        const encodedKey = encodeR2ObjectKey(key);
+
+        const endpoint = new URL(`https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${encodedKey}`);
+        endpoint.searchParams.set("X-Amz-Expires", "900");
+
+        const r2 = new AwsClient({ accessKeyId, secretAccessKey });
+        const signed = await r2.sign(
+          new Request(endpoint.toString(), {
+            method: "PUT",
+            headers: { "Content-Type": contentType }
+          }),
+          {
+            aws: {
+              signQuery: true
+            }
+          }
+        );
+
+        return Response.json({
+          url: signed.url,
+          method: "PUT",
+          key,
+          headers: {
+            "Content-Type": contentType
+          }
+        });
+      } catch (error) {
+        console.error("Presign error:", error);
+        return new Response("Gagal generate upload URL", { status: 500 });
+      }
     }
 
     // MKDIR (Create Folder)
@@ -736,6 +839,38 @@ tr:hover { background: rgba(255,255,255,0.03); }
   white-space: nowrap;
 }
 
+.upload-progress {
+  display: none;
+  width: 100%;
+  margin-top: 6px;
+  gap: 8px;
+  flex-direction: column;
+}
+
+.upload-progress.is-active {
+  display: flex;
+}
+
+.upload-progress-text {
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.upload-progress-track {
+  height: 8px;
+  width: 100%;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+  overflow: hidden;
+}
+
+.upload-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--md-sys-color-primary);
+  transition: width 0.15s linear;
+}
+
 /* Footer / Visitor */
 .footer {
   margin-top: 48px;
@@ -833,6 +968,12 @@ tr:hover { background: rgba(255,255,255,0.03); }
           <button type="button" class="btn btn-outlined upload-clear" id="clear-upload" style="display:none">Clear</button>
         </div>
         <div class="upload-list" id="upload-list"></div>
+        <div class="upload-progress" id="upload-progress">
+          <div class="upload-progress-text" id="upload-progress-text"></div>
+          <div class="upload-progress-track">
+            <div class="upload-progress-bar" id="upload-progress-bar"></div>
+          </div>
+        </div>
       </form>
       <form method="POST" action="/mkdir" class="tool-group admin-row folder-form">
         <input type="hidden" name="prefix" value="${escapeHtml(prefix)}">
@@ -879,6 +1020,12 @@ const uploadInput = document.getElementById('upload-input');
 const uploadDropzone = document.getElementById('upload-dropzone');
 const uploadList = document.getElementById('upload-list');
 const clearUploadBtn = document.getElementById('clear-upload');
+const uploadForm = document.getElementById('upload-form');
+const uploadProgress = document.getElementById('upload-progress');
+const uploadProgressText = document.getElementById('upload-progress-text');
+const uploadProgressBar = document.getElementById('upload-progress-bar');
+let isUploading = false;
+const UPLOAD_CONCURRENCY = 3;
 
 function resetSearch() {
   searchInput.value = '';
@@ -1023,6 +1170,120 @@ if (clearUploadBtn && uploadInput) {
   clearUploadBtn.addEventListener('click', () => {
     uploadInput.value = '';
     renderUploadList();
+  });
+}
+
+if (uploadForm) {
+  uploadForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (isUploading || !uploadInput) return;
+
+    const files = Array.from(uploadInput.files || []);
+    if (files.length === 0) return;
+
+    const submitButton = uploadForm.querySelector('button[type="submit"]');
+    if (!submitButton) return;
+
+    const originalLabel = submitButton.textContent || 'Upload';
+    const prefixInput = uploadForm.querySelector('input[name="prefix"]');
+    const prefixValue = prefixInput ? prefixInput.value : '';
+    const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
+    const progressByIndex = files.map(() => 0);
+    let completedCount = 0;
+
+    const renderProgress = () => {
+      const uploadedBytes = progressByIndex.reduce((sum, value) => sum + value, 0);
+      const percent = totalBytes > 0 ? Math.min((uploadedBytes / totalBytes) * 100, 100) : 0;
+      if (uploadProgress && uploadProgressText && uploadProgressBar) {
+        uploadProgress.classList.add('is-active');
+        uploadProgressBar.style.width = percent.toFixed(2) + '%';
+        uploadProgressText.textContent = 'Uploading ' + completedCount + '/' + files.length + ' files - ' + percent.toFixed(1) + '%';
+      }
+    };
+
+    const uploadViaXhr = (url, method, headers, file, index) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method || 'PUT', url);
+      for (const [headerKey, headerValue] of Object.entries(headers || {})) {
+        xhr.setRequestHeader(headerKey, headerValue);
+      }
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        progressByIndex[index] = event.loaded;
+        renderProgress();
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          progressByIndex[index] = file.size || progressByIndex[index];
+          completedCount += 1;
+          renderProgress();
+          resolve();
+          return;
+        }
+        reject(new Error(xhr.responseText || 'Upload error'));
+      };
+
+      xhr.onerror = () => reject(new Error('Network upload error'));
+      xhr.send(file);
+    });
+
+    isUploading = true;
+    submitButton.disabled = true;
+    clearUploadBtn.style.display = 'none';
+    submitButton.textContent = 'Uploading...';
+    renderProgress();
+
+    try {
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(UPLOAD_CONCURRENCY, files.length) }, async () => {
+        while (cursor < files.length) {
+          const index = cursor++;
+          const file = files[index];
+          const presign = await fetch('/upload-presign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+              filename: file.name,
+              prefix: prefixValue,
+              contentType: file.type || 'application/octet-stream'
+            })
+          });
+
+          if (!presign.ok) {
+            const errText = await presign.text().catch(() => 'Presign error');
+            throw new Error(errText || 'Presign error');
+          }
+
+          const signed = await presign.json();
+          await uploadViaXhr(
+            signed.url,
+            signed.method || 'PUT',
+            signed.headers || { 'Content-Type': file.type || 'application/octet-stream' },
+            file,
+            index
+          );
+        }
+      });
+
+      await Promise.all(workers);
+
+      window.location.href = '/?prefix=' + encodeURIComponent(prefixValue);
+    } catch (err) {
+      alert('Upload gagal: ' + (err && err.message ? err.message : 'Unknown error'));
+    } finally {
+      isUploading = false;
+      submitButton.disabled = false;
+      submitButton.textContent = originalLabel;
+      if (uploadProgress) uploadProgress.classList.remove('is-active');
+      if (uploadProgressBar) uploadProgressBar.style.width = '0%';
+      if (uploadProgressText) uploadProgressText.textContent = '';
+      if (uploadInput && uploadInput.files && uploadInput.files.length > 0) {
+        clearUploadBtn.style.display = 'inline-flex';
+      }
+    }
   });
 }
 </script>
@@ -1367,4 +1628,11 @@ function escapeHtml(str) {
     '"': "&quot;",
     "'": "&#039;"
   }[c]));
+}
+
+function encodeR2ObjectKey(key) {
+  return String(key)
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/");
 }
