@@ -81,4 +81,4 @@ npm run deploy
 
 ## 📝 License
 
-This project is private and for personal use.
+This project is licensed under the MIT License.
