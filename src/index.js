@@ -265,8 +265,11 @@ export default {
 
     // DOWNLOAD / PREVIEW FILE
     if (rawPath) {
+      const isDownload = url.searchParams.get("download") === "1";
       const range = request.headers.get("Range");
-      const object = await env.BUCKET.get(rawPath, range ? { range: request.headers } : undefined);
+      const object = request.method === "HEAD"
+        ? await env.BUCKET.head(rawPath)
+        : await env.BUCKET.get(rawPath, range && !isDownload ? { range: request.headers } : undefined);
 
       if (!object) {
         return new Response("File not found", { status: 404 });
@@ -275,27 +278,40 @@ export default {
       const headers = new Headers();
       object.writeHttpMetadata(headers);
       headers.set("etag", object.httpEtag);
-      headers.set("Accept-Ranges", "bytes");
+      headers.set("Accept-Ranges", isDownload ? "none" : "bytes");
 
-      if (object.range) {
-        headers.set("Content-Range", `bytes ${object.range.offset}-${object.range.offset + (object.range.length || 0) - 1}/${object.size}`);
-        headers.set("Content-Length", String(object.range.length));
+      if (object.range && !isDownload) {
+        const rangeLength = object.range.length ?? object.size - object.range.offset;
+        headers.set("Content-Range", `bytes ${object.range.offset}-${object.range.offset + rangeLength - 1}/${object.size}`);
+        headers.set("Content-Length", String(rangeLength));
+      } else {
+        headers.delete("Content-Range");
+        headers.set("Content-Length", String(object.size));
       }
 
       const contentType = headers.get("content-type") || guessContentType(rawPath);
       headers.set("Content-Type", contentType);
 
-      if (url.searchParams.get("download") === "1") {
-        headers.set("Content-Disposition", `attachment; filename="${rawPath.split("/").pop()}"`);
-      } else if (isPreviewable(contentType, rawPath)) {
-        headers.set("Content-Disposition", `inline; filename="${rawPath.split("/").pop()}"`);
-      } else {
-        headers.set("Content-Disposition", `attachment; filename="${rawPath.split("/").pop()}"`);
+      const dispositionType = isDownload || !isPreviewable(contentType, rawPath)
+        ? "attachment"
+        : "inline";
+      headers.set("Content-Disposition", contentDisposition(dispositionType, rawPath));
+      if (isDownload) {
+        headers.set("Cache-Control", "no-store");
+      }
+
+      const responseStatus = object.range && !isDownload ? 206 : 200;
+
+      if (request.method === "HEAD") {
+        return new Response(null, {
+          headers,
+          status: responseStatus
+        });
       }
 
       return new Response(object.body, { 
         headers, 
-        status: object.range ? 206 : 200 
+        status: responseStatus 
       });
     }
 
@@ -325,7 +341,7 @@ export default {
         rows += `
 <tr>
   <td>
-    <a class="file-link" href="/${encodeURIComponent(file.key)}" ${previewable ? `target="_blank"` : ""}>
+    <a class="file-link" href="${objectUrl(url.origin, file.key)}" ${previewable ? `target="_blank"` : ""}>
       <span class="icon">${isFolder ? "📁" : getIcon(file.key)}</span>${escapeHtml(file.key)}
     </a>
   </td>
@@ -335,8 +351,8 @@ export default {
   <td>
     <div class="file-actions">
       ${isFolder ? `<a class="btn btn-tonal" href="/?prefix=${encodeURIComponent(file.key)}">Open</a>` : `
-        ${previewable ? `<a class="btn btn-tonal" href="/${encodeURIComponent(file.key)}" target="_blank">Preview</a>` : ""}
-        <a class="btn btn-outlined" href="/${encodeURIComponent(file.key)}?download=1">Download</a>
+        ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
+        <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
       `}
     </div>
   </td>
@@ -405,7 +421,7 @@ export default {
         rows += `
 <tr>
   <td>
-    <a class="file-link" href="/${encodeURIComponent(file.key)}" ${previewable ? `target="_blank"` : ""}>
+    <a class="file-link" href="${objectUrl(url.origin, file.key)}" ${previewable ? `target="_blank"` : ""}>
       <span class="icon">${getIcon(file.key)}</span>${escapeHtml(displayName)}
     </a>
   </td>
@@ -414,8 +430,8 @@ export default {
   <td>${new Date(file.uploaded).toLocaleString()}</td>
   <td>
     <div class="file-actions">
-      ${previewable ? `<a class="btn btn-tonal" href="/${encodeURIComponent(file.key)}" target="_blank">Preview</a>` : ""}
-      <a class="btn btn-outlined" href="/${encodeURIComponent(file.key)}?download=1">Download</a>
+      ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
+      <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
       ${loggedIn && file.key.toLowerCase().endsWith(".txt") ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
       ${loggedIn ? `
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus file ini?')">
@@ -459,7 +475,8 @@ export default {
         key: f.key,
         size: f.size,
         uploaded: f.uploaded
-      }))
+      })),
+      origin: url.origin
     }));
   }
 };
@@ -490,7 +507,7 @@ async function listAllObjectsWithPrefix(bucket, prefix) {
   return objects;
 }
 
-function mainPage({ rows, loggedIn, prefix, storageUsed, storageLimit, storagePercent, visitorCount, isSearching, searchQuery, allFiles }) {
+function mainPage({ rows, loggedIn, prefix, storageUsed, storageLimit, storagePercent, visitorCount, isSearching, searchQuery, allFiles, origin }) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1010,6 +1027,7 @@ tr:hover { background: rgba(255,255,255,0.03); }
 const ALL_FILES = ${JSON.stringify(allFiles)};
 const LOGGED_IN = ${loggedIn};
 const CURRENT_PREFIX = ${JSON.stringify(prefix)};
+const APP_ORIGIN = ${JSON.stringify(origin)};
 const INITIAL_ROWS = \`${rows.replace(/`/g, "\\`").replace(/\$/g, "\\$")}\`;
 
 const searchInput = document.getElementById('search-input');
@@ -1063,6 +1081,12 @@ function isPreviewable(filename) {
   return /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv)$/i.test(filename);
 }
 
+function objectUrl(key, download) {
+  const url = new URL('/' + String(key).split('/').map(encodeURIComponent).join('/'), APP_ORIGIN || window.location.origin);
+  if (download) url.searchParams.set('download', '1');
+  return url.toString();
+}
+
 searchInput.addEventListener('input', (e) => {
   const q = e.target.value.toLowerCase().trim();
   
@@ -1088,7 +1112,7 @@ searchInput.addEventListener('input', (e) => {
     return \`
 <tr>
   <td>
-    <a class="file-link" href="/\${encodeURIComponent(f.key)}" \${previewable ? 'target="_blank"' : ''}>
+    <a class="file-link" href="\${objectUrl(f.key)}" \${previewable ? 'target="_blank"' : ''}>
       <span class="icon">\${isFolder ? '📁' : getIcon(f.key)}</span>\${f.key}
     </a>
   </td>
@@ -1098,8 +1122,8 @@ searchInput.addEventListener('input', (e) => {
   <td>
     <div class="file-actions">
       \${isFolder ? \`<a class="btn btn-tonal" href="/?prefix=\${encodeURIComponent(f.key)}">Open</a>\` : \`
-        \${previewable ? \`<a class="btn btn-tonal" href="/\${encodeURIComponent(f.key)}" target="_blank">Preview</a>\` : ''}
-        <a class="btn btn-outlined" href="/\${encodeURIComponent(f.key)}?download=1">Download</a>
+        \${previewable ? \`<a class="btn btn-tonal" href="\${objectUrl(f.key)}" target="_blank">Preview</a>\` : ''}
+        <a class="btn btn-outlined" href="\${objectUrl(f.key, true)}">Download</a>
       \`}
       \${LOGGED_IN ? \`
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus \${isFolder ? 'folder' : 'file'} ini?')">
@@ -1628,6 +1652,29 @@ function escapeHtml(str) {
     '"': "&quot;",
     "'": "&#039;"
   }[c]));
+}
+
+function objectUrl(origin, key, download = false) {
+  const url = new URL("/" + encodeObjectPath(key), origin);
+  if (download) url.searchParams.set("download", "1");
+  return url.toString();
+}
+
+function encodeObjectPath(key) {
+  return String(key)
+    .replace(/^\/+/, "")
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/");
+}
+
+function contentDisposition(type, key) {
+  const filename = String(key).split("/").pop() || "download";
+  const fallback = filename
+    .replace(/[^\x20-\x7E]/g, "_")
+    .replace(/["\\]/g, "_");
+
+  return `${type}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 function encodeR2ObjectKey(key) {
