@@ -1,0 +1,26 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "morning-heart-215e",
+	"main": "src/index.js",
+	"compatibility_date": "2026-05-03",
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "chizui-files"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "STATS",
+			"id": "12441270b76d4ab1bd00c58af5112c0c"
+		}
+	]
+}
