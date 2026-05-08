@@ -6,8 +6,11 @@ describe("file downloads", () => {
     const env = createEnv({
       "tencent/tutorial cloud tencent pc mode.mp4": "video data"
     });
+    const cookie = await loginCookie(env, "viewer", "viewerpass");
 
-    const response = await worker.fetch(new Request("http://example.com/?q=tencent"), env);
+    const response = await worker.fetch(new Request("http://example.com/?q=tencent", {
+      headers: { Cookie: cookie }
+    }), env);
     const body = await response.text();
 
     expect(body).toContain('href="http://example.com/tencent/tutorial%20cloud%20tencent%20pc%20mode.mp4?download=1"');
@@ -18,9 +21,12 @@ describe("file downloads", () => {
     const env = createEnv({
       "tencent/tutorial cloud tencent pc mode.mp4": "video data"
     });
+    const cookie = await loginCookie(env, "viewer", "viewerpass");
 
     const response = await worker.fetch(
-      new Request("http://example.com/tencent/tutorial%20cloud%20tencent%20pc%20mode.mp4?download=1"),
+      new Request("http://example.com/tencent/tutorial%20cloud%20tencent%20pc%20mode.mp4?download=1", {
+        headers: { Cookie: cookie }
+      }),
       env
     );
 
@@ -34,14 +40,61 @@ describe("file downloads", () => {
     expect(await response.text()).toBe("video data");
   });
 
-  it("ignores Range headers on forced downloads for FDM compatibility", async () => {
+  it("redirects anonymous users before showing the explorer", async () => {
     const env = createEnv({
       "video.mp4": "video data"
     });
 
+    const response = await worker.fetch(new Request("http://example.com/"), env);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("http://example.com/login");
+  });
+
+  it("redirects anonymous users before serving direct files", async () => {
+    const env = createEnv({
+      "video.mp4": "video data"
+    });
+
+    const response = await worker.fetch(new Request("http://example.com/video.mp4?download=1"), env);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("http://example.com/login");
+  });
+
+  it("blocks viewer users from admin upload endpoints", async () => {
+    const env = createEnv({
+      "video.mp4": "video data"
+    });
+    const cookie = await loginCookie(env, "viewer", "viewerpass");
+
+    const response = await worker.fetch(
+      new Request("http://example.com/upload-presign", {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ filename: "video.mp4" })
+      }),
+      env
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it("ignores Range headers on forced downloads for FDM compatibility", async () => {
+    const env = createEnv({
+      "video.mp4": "video data"
+    });
+    const cookie = await loginCookie(env, "viewer", "viewerpass");
+
     const response = await worker.fetch(
       new Request("http://example.com/video.mp4?download=1", {
-        headers: { Range: "bytes=0-4" }
+        headers: {
+          Cookie: cookie,
+          Range: "bytes=0-4"
+        }
       }),
       env
     );
@@ -57,10 +110,14 @@ describe("file downloads", () => {
     const env = createEnv({
       "video.mp4": "video data"
     });
+    const cookie = await loginCookie(env, "viewer", "viewerpass");
 
     const response = await worker.fetch(
       new Request("http://example.com/video.mp4", {
-        headers: { Range: "bytes=0-4" }
+        headers: {
+          Cookie: cookie,
+          Range: "bytes=0-4"
+        }
       }),
       env
     );
@@ -74,8 +131,25 @@ describe("file downloads", () => {
 
 function createEnv(files) {
   return {
-    BUCKET: new MockBucket(files)
+    BUCKET: new MockBucket(files),
+    USERNAME: "admin",
+    PASSWORD: "adminpass",
+    VIEWER_USERNAME: "viewer",
+    VIEWER_PASSWORD: "viewerpass",
+    SECRET_KEY: "test-secret"
   };
+}
+
+async function loginCookie(env, username, password) {
+  const response = await worker.fetch(new Request("http://example.com/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username, password })
+  }), env);
+
+  const cookie = response.headers.get("Set-Cookie");
+  expect(cookie).toBeTruthy();
+  return cookie.split(";")[0];
 }
 
 class MockBucket {

@@ -1,6 +1,7 @@
 import { AwsClient } from "aws4fetch";
 
-const COOKIE_NAME = "chizui_upload_login";
+const COOKIE_NAME = "chizui_file_login";
+const SESSION_MAX_AGE = 1800; // 30 menit
 
 // Ubah ini kalau mau limit storage beda
 const STORAGE_LIMIT = 10 * 1024 * 1024 * 1024; // 10 GB
@@ -17,16 +18,24 @@ export default {
         const user = form.get("username");
         const pass = form.get("password");
 
-        const targetUser = env.USERNAME;
-        const targetPass = env.PASSWORD;
+        const adminUser = env.USERNAME;
+        const adminPass = env.PASSWORD;
+        const viewerUser = env.VIEWER_USERNAME;
+        const viewerPass = env.VIEWER_PASSWORD;
 
-        if (!targetUser || !targetPass || !env.SECRET_KEY) {
-          return new Response("Security Error: Secrets (USERNAME/PASSWORD/SECRET_KEY) are not configured in Cloudflare.", { status: 500 });
+        if (!adminUser || !adminPass || !viewerUser || !viewerPass || !env.SECRET_KEY) {
+          return new Response("Security Error: Secrets (USERNAME/PASSWORD/VIEWER_USERNAME/VIEWER_PASSWORD/SECRET_KEY) are not configured in Cloudflare.", { status: 500 });
         }
 
-        if (user === targetUser && pass === targetPass) {
-          const expiration = Math.floor(Date.now() / 1000) + 1800; // 30 menit (1800 detik)
-          const payload = `admin:${expiration}`;
+        const role = user === adminUser && pass === adminPass
+          ? "admin"
+          : user === viewerUser && pass === viewerPass
+            ? "viewer"
+            : "";
+
+        if (role) {
+          const expiration = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE;
+          const payload = `${role}:${expiration}`;
           const signature = await sign(payload, env.SECRET_KEY);
           const cookieValue = `${payload}.${signature}`;
 
@@ -34,7 +43,7 @@ export default {
             status: 302,
             headers: {
               Location: "/",
-              "Set-Cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=1800`
+              "Set-Cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
             }
           });
         }
@@ -58,8 +67,8 @@ export default {
 
     // UPLOAD
     if (request.method === "POST" && url.pathname === "/upload") {
-      if (!(await isLoggedIn(request, env))) {
-        return new Response("Unauthorized. Login dulu untuk upload.", { status: 401 });
+      if (!(await isAdmin(request, env))) {
+        return new Response("Unauthorized. Login sebagai admin dulu untuk upload.", { status: 401 });
       }
 
       try {
@@ -94,8 +103,8 @@ export default {
 
     // DIRECT UPLOAD (faster path: no multipart parsing in Worker)
     if (request.method === "POST" && url.pathname === "/upload-direct") {
-      if (!(await isLoggedIn(request, env))) {
-        return new Response("Unauthorized. Login dulu untuk upload.", { status: 401 });
+      if (!(await isAdmin(request, env))) {
+        return new Response("Unauthorized. Login sebagai admin dulu untuk upload.", { status: 401 });
       }
 
       const keyParam = url.searchParams.get("key");
@@ -129,8 +138,8 @@ export default {
 
     // PRESIGNED URL for direct browser -> R2 upload
     if (request.method === "POST" && url.pathname === "/upload-presign") {
-      if (!(await isLoggedIn(request, env))) {
-        return new Response("Unauthorized. Login dulu untuk upload.", { status: 401 });
+      if (!(await isAdmin(request, env))) {
+        return new Response("Unauthorized. Login sebagai admin dulu untuk upload.", { status: 401 });
       }
 
       const accountId = env.R2_ACCOUNT_ID;
@@ -190,7 +199,7 @@ export default {
 
     // MKDIR (Create Folder)
     if (request.method === "POST" && url.pathname === "/mkdir") {
-      if (!(await isLoggedIn(request, env))) {
+      if (!(await isAdmin(request, env))) {
         return new Response("Unauthorized", { status: 401 });
       }
 
@@ -213,7 +222,7 @@ export default {
 
     // DELETE (File or Folder)
     if (request.method === "POST" && url.pathname === "/delete") {
-      if (!(await isLoggedIn(request, env))) {
+      if (!(await isAdmin(request, env))) {
         return new Response("Unauthorized", { status: 401 });
       }
 
@@ -239,7 +248,7 @@ export default {
 
     // EDIT TEXT FILE
     if (url.pathname === "/edit") {
-      if (!(await isLoggedIn(request, env))) {
+      if (!(await isAdmin(request, env))) {
         return new Response("Unauthorized", { status: 401 });
       }
 
@@ -265,6 +274,11 @@ export default {
 
     // DOWNLOAD / PREVIEW FILE
     if (rawPath) {
+      const session = await getSession(request, env);
+      if (!session) {
+        return redirectToLogin(url);
+      }
+
       const isDownload = url.searchParams.get("download") === "1";
       const range = request.headers.get("Range");
       const object = request.method === "HEAD"
@@ -315,7 +329,12 @@ export default {
       });
     }
 
-    const loggedIn = await isLoggedIn(request, env);
+    const session = await getSession(request, env);
+    if (!session) {
+      return redirectToLogin(url);
+    }
+
+    const isAdminUser = session.role === "admin";
 
     // Get all objects once for both stats and search
     const allFiles = await listAllObjects(env.BUCKET);
@@ -397,7 +416,7 @@ export default {
   <td>
     <div class="file-actions">
       <a class="btn btn-tonal" href="/?prefix=${encodeURIComponent(folder)}">Open</a>
-      ${loggedIn ? `
+      ${isAdminUser ? `
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus folder ini?')">
         <input type="hidden" name="key" value="${escapeHtml(folder)}">
         <input type="hidden" name="prefix" value="${escapeHtml(prefix)}">
@@ -432,8 +451,8 @@ export default {
     <div class="file-actions">
       ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
       <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
-      ${loggedIn && file.key.toLowerCase().endsWith(".txt") ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
-      ${loggedIn ? `
+      ${isAdminUser && file.key.toLowerCase().endsWith(".txt") ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
+      ${isAdminUser ? `
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus file ini?')">
         <input type="hidden" name="key" value="${escapeHtml(file.key)}">
         <input type="hidden" name="prefix" value="${escapeHtml(prefix)}">
@@ -463,7 +482,8 @@ export default {
 
     return html(mainPage({
       rows,
-      loggedIn,
+      isAdmin: isAdminUser,
+      userRole: session.role,
       prefix,
       storageUsed,
       storageLimit: STORAGE_LIMIT,
@@ -507,7 +527,7 @@ async function listAllObjectsWithPrefix(bucket, prefix) {
   return objects;
 }
 
-function mainPage({ rows, loggedIn, prefix, storageUsed, storageLimit, storagePercent, visitorCount, isSearching, searchQuery, allFiles, origin }) {
+function mainPage({ rows, isAdmin, userRole, prefix, storageUsed, storageLimit, storagePercent, visitorCount, isSearching, searchQuery, allFiles, origin }) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -580,6 +600,12 @@ body {
   text-overflow: ellipsis;
 }
 
+.top-bar .actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* Storage Card */
 .storage-card {
   background: var(--md-sys-color-primary-container);
@@ -647,6 +673,18 @@ body {
 .btn-danger {
   background: #8C1D18;
   color: white;
+}
+
+.role-badge {
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 20px;
+  color: var(--md-sys-color-on-surface-variant);
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 td .btn {
@@ -957,7 +995,8 @@ tr:hover { background: rgba(255,255,255,0.03); }
       </form>
     </div>
     <div class="actions">
-      ${loggedIn ? `<a class="btn btn-outlined" href="/logout">Logout</a>` : `<a class="btn btn-filled" href="/login">Login</a>`}
+      <span class="role-badge">${isAdmin ? "Admin" : "Viewer"}</span>
+      <a class="btn btn-outlined" href="/logout">Logout</a>
     </div>
   </div>
 
@@ -971,7 +1010,7 @@ tr:hover { background: rgba(255,255,255,0.03); }
     </div>
   </div>
 
-  ${loggedIn ? `
+  ${isAdmin ? `
   <div class="admin-tools">
       <form method="POST" action="/upload" enctype="multipart/form-data" class="tool-group admin-row upload-form" id="upload-form">
         <input type="hidden" name="prefix" value="${escapeHtml(prefix)}">
@@ -1025,7 +1064,8 @@ tr:hover { background: rgba(255,255,255,0.03); }
 
 <script>
 const ALL_FILES = ${JSON.stringify(allFiles)};
-const LOGGED_IN = ${loggedIn};
+const IS_ADMIN = ${isAdmin};
+const USER_ROLE = ${JSON.stringify(userRole)};
 const CURRENT_PREFIX = ${JSON.stringify(prefix)};
 const APP_ORIGIN = ${JSON.stringify(origin)};
 const INITIAL_ROWS = \`${rows.replace(/`/g, "\\`").replace(/\$/g, "\\$")}\`;
@@ -1125,7 +1165,7 @@ searchInput.addEventListener('input', (e) => {
         \${previewable ? \`<a class="btn btn-tonal" href="\${objectUrl(f.key)}" target="_blank">Preview</a>\` : ''}
         <a class="btn btn-outlined" href="\${objectUrl(f.key, true)}">Download</a>
       \`}
-      \${LOGGED_IN ? \`
+      \${IS_ADMIN ? \`
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus \${isFolder ? 'folder' : 'file'} ini?')">
         <input type="hidden" name="key" value="\${f.key}">
         <input type="hidden" name="prefix" value="\${CURRENT_PREFIX}">
@@ -1398,7 +1438,7 @@ button:active { transform: scale(0.98); }
 <body>
 <div class="login-card">
   <h2>Login</h2>
-  <p>Secure access for admins</p>
+  <p>Masuk sebagai viewer untuk preview/download, atau admin untuk upload dan kelola file.</p>
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
   <form method="POST" action="/login">
     <input name="username" placeholder="Username" required>
@@ -1491,23 +1531,49 @@ function getParentPrefix(prefix) {
   return parts.length ? parts.join("/") + "/" : "";
 }
 
-async function isLoggedIn(request, env) {
+async function isAdmin(request, env) {
+  const session = await getSession(request, env);
+  return session?.role === "admin";
+}
+
+async function getSession(request, env) {
+  if (!env.SECRET_KEY) return null;
+
   const cookieHeader = request.headers.get("Cookie") || "";
-  const cookies = Object.fromEntries(cookieHeader.split("; ").map(c => c.split("=")));
+  const cookies = Object.fromEntries(
+    cookieHeader
+      .split(";")
+      .map(c => c.trim())
+      .filter(Boolean)
+      .map(c => {
+        const separator = c.indexOf("=");
+        return separator === -1 ? [c, ""] : [c.slice(0, separator), c.slice(separator + 1)];
+      })
+  );
   const cookieValue = cookies[COOKIE_NAME];
 
-  if (!cookieValue) return false;
+  if (!cookieValue) return null;
 
   const [payload, signature] = cookieValue.split(".");
-  if (!payload || !signature) return false;
+  if (!payload || !signature) return null;
 
   const expectedSignature = await sign(payload, env.SECRET_KEY);
-  if (signature !== expectedSignature) return false;
+  if (signature !== expectedSignature) return null;
 
-  const [user, expiration] = payload.split(":");
-  if (user !== "admin" || Date.now() / 1000 > parseInt(expiration)) return false;
+  const [role, expiration] = payload.split(":");
+  if (!["admin", "viewer"].includes(role) || Date.now() / 1000 > parseInt(expiration)) return null;
 
-  return true;
+  return { role };
+}
+
+function redirectToLogin(url) {
+  const loginUrl = new URL("/login", url.origin);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: loginUrl.toString()
+    }
+  });
 }
 
 async function sign(data, secret) {

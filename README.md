@@ -44,8 +44,10 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
 
 2. **Environment Variables**:
    Set the following secrets in your Cloudflare Worker environment:
-   - `USERNAME`: The username for dashboard access.
-   - `PASSWORD`: The password for dashboard access.
+   - `USERNAME`: The admin username for upload/edit/delete access.
+   - `PASSWORD`: The admin password for upload/edit/delete access.
+   - `VIEWER_USERNAME`: The viewer username for preview/download access.
+   - `VIEWER_PASSWORD`: The viewer password for preview/download access.
    - `SECRET_KEY`: A strong random string used for signing authentication cookies.
    - `R2_ACCOUNT_ID`: Your Cloudflare account ID.
    - `R2_ACCESS_KEY_ID`: R2 S3 API access key ID.
@@ -56,6 +58,8 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
    ```bash
    npx wrangler secret put USERNAME
    npx wrangler secret put PASSWORD
+   npx wrangler secret put VIEWER_USERNAME
+   npx wrangler secret put VIEWER_PASSWORD
    npx wrangler secret put SECRET_KEY
    npx wrangler secret put R2_ACCOUNT_ID
    npx wrangler secret put R2_ACCESS_KEY_ID
@@ -93,6 +97,8 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
    ```env
    USERNAME=admin
    PASSWORD=yourpassword
+   VIEWER_USERNAME=viewer
+   VIEWER_PASSWORD=viewerpassword
    SECRET_KEY=your-secret-key
    R2_ACCOUNT_ID=your-account-id
    R2_ACCESS_KEY_ID=your-r2-access-key-id
