@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import worker from "../src";
 
+const BROWSER_HEADERS = {
+  "User-Agent": "Vitest Browser",
+  "Accept-Language": "id-ID,id;q=0.9"
+};
+
 describe("file downloads", () => {
   it("renders absolute download links without encoding folder slashes", async () => {
     const env = createEnv({
@@ -9,7 +14,7 @@ describe("file downloads", () => {
     const cookie = await loginCookie(env, "viewer", "viewerpass");
 
     const response = await worker.fetch(new Request("http://example.com/?q=tencent", {
-      headers: { Cookie: cookie }
+      headers: withSessionHeaders(cookie)
     }), env);
     const body = await response.text();
 
@@ -25,7 +30,7 @@ describe("file downloads", () => {
 
     const response = await worker.fetch(
       new Request("http://example.com/tencent/tutorial%20cloud%20tencent%20pc%20mode.mp4?download=1", {
-        headers: { Cookie: cookie }
+        headers: withSessionHeaders(cookie)
       }),
       env
     );
@@ -72,7 +77,7 @@ describe("file downloads", () => {
       new Request("http://example.com/upload-presign", {
         method: "POST",
         headers: {
-          Cookie: cookie,
+          ...withSessionHeaders(cookie),
           "Content-Type": "application/json"
         },
         body: JSON.stringify({ filename: "video.mp4" })
@@ -92,7 +97,7 @@ describe("file downloads", () => {
     const response = await worker.fetch(
       new Request("http://example.com/video.mp4?download=1", {
         headers: {
-          Cookie: cookie,
+          ...withSessionHeaders(cookie),
           Range: "bytes=0-4"
         }
       }),
@@ -115,7 +120,7 @@ describe("file downloads", () => {
     const response = await worker.fetch(
       new Request("http://example.com/video.mp4", {
         headers: {
-          Cookie: cookie,
+          ...withSessionHeaders(cookie),
           Range: "bytes=0-4"
         }
       }),
@@ -143,13 +148,23 @@ function createEnv(files) {
 async function loginCookie(env, username, password) {
   const response = await worker.fetch(new Request("http://example.com/login", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      ...BROWSER_HEADERS,
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
     body: new URLSearchParams({ username, password })
   }), env);
 
   const cookie = response.headers.get("Set-Cookie");
   expect(cookie).toBeTruthy();
   return cookie.split(";")[0];
+}
+
+function withSessionHeaders(cookie) {
+  return {
+    ...BROWSER_HEADERS,
+    Cookie: cookie
+  };
 }
 
 class MockBucket {

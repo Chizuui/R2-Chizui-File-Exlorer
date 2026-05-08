@@ -1,6 +1,6 @@
 import { AwsClient } from "aws4fetch";
 
-const COOKIE_NAME = "chizui_file_login";
+const COOKIE_NAME = "__Host-chizui_file_login";
 const SESSION_MAX_AGE = 1800; // 30 menit
 
 // Ubah ini kalau mau limit storage beda
@@ -35,7 +35,8 @@ export default {
 
         if (role) {
           const expiration = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE;
-          const payload = `${role}:${expiration}`;
+          const fingerprint = await sessionFingerprint(request, env);
+          const payload = `${role}:${expiration}:${fingerprint}`;
           const signature = await sign(payload, env.SECRET_KEY);
           const cookieValue = `${payload}.${signature}`;
 
@@ -43,7 +44,7 @@ export default {
             status: 302,
             headers: {
               Location: "/",
-              "Set-Cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}`
+              "Set-Cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_MAX_AGE}`
             }
           });
         }
@@ -60,7 +61,7 @@ export default {
         status: 302,
         headers: {
           Location: "/",
-          "Set-Cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
+          "Set-Cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
         }
       });
     }
@@ -1438,7 +1439,7 @@ button:active { transform: scale(0.98); }
 <body>
 <div class="login-card">
   <h2>Login</h2>
-  <p>Masuk sebagai viewer untuk preview/download, atau admin untuk upload dan kelola file.</p>
+  <p>Login to See files.</p>
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
   <form method="POST" action="/login">
     <input name="username" placeholder="Username" required>
@@ -1560,8 +1561,11 @@ async function getSession(request, env) {
   const expectedSignature = await sign(payload, env.SECRET_KEY);
   if (signature !== expectedSignature) return null;
 
-  const [role, expiration] = payload.split(":");
+  const [role, expiration, fingerprint] = payload.split(":");
   if (!["admin", "viewer"].includes(role) || Date.now() / 1000 > parseInt(expiration)) return null;
+
+  const expectedFingerprint = await sessionFingerprint(request, env);
+  if (fingerprint !== expectedFingerprint) return null;
 
   return { role };
 }
@@ -1718,6 +1722,21 @@ function escapeHtml(str) {
     '"': "&quot;",
     "'": "&#039;"
   }[c]));
+}
+
+async function sessionFingerprint(request, env) {
+  const userAgent = request.headers.get("User-Agent") || "";
+  const acceptLanguage = request.headers.get("Accept-Language") || "";
+  const fingerprintSource = `${userAgent}\n${acceptLanguage}\n${env.SECRET_KEY}`;
+  return sha256Url(fingerprintSource);
+}
+
+async function sha256Url(data) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 function objectUrl(origin, key, download = false) {
