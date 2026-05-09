@@ -978,13 +978,13 @@ tr:hover { background: rgba(255,255,255,0.03); }
 
 @media (max-width: 768px) {
   .container {
-    padding: 24px 14px;
+    padding: 24px 12px;
   }
 
   .top-bar {
     flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
+    align-items: stretch;
+    gap: 12px;
     margin-bottom: 24px;
   }
 
@@ -1027,8 +1027,8 @@ tr:hover { background: rgba(255,255,255,0.03); }
   }
 
   .admin-tools {
-    align-items: stretch;
-    padding: 16px;
+    align-items: center;
+    padding: 18px;
     border-radius: 20px;
   }
 
@@ -1043,19 +1043,23 @@ tr:hover { background: rgba(255,255,255,0.03); }
 
   .folder-form,
   .upload-form {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
   }
 
-  .tool-group input[type="text"],
+  .tool-group input[type="text"] {
+    min-width: 0;
+    flex: 1 1 180px;
+  }
+
   .tool-group .btn,
   .upload-controls .btn {
-    width: 100%;
+    width: auto;
+    flex: 0 0 auto;
   }
 
   .upload-dropzone {
-    flex-basis: auto;
-    width: 100%;
+    flex: 1 1 220px;
     min-width: 0;
     justify-content: center;
   }
@@ -1066,7 +1070,7 @@ tr:hover { background: rgba(255,255,255,0.03); }
   }
 
   .upload-controls {
-    width: 100%;
+    width: auto;
     justify-content: flex-start;
   }
 
@@ -1083,14 +1087,12 @@ tr:hover { background: rgba(255,255,255,0.03); }
   }
 
   table {
-    min-width: 560px;
+    min-width: 720px;
   }
-
-  th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display: none; }
 
   th:last-child,
   td:last-child {
-    width: 170px;
+    width: 190px;
     padding-left: 12px;
     padding-right: 12px;
   }
@@ -1103,7 +1105,7 @@ tr:hover { background: rgba(255,255,255,0.03); }
 
 @media (max-width: 480px) {
   .container {
-    padding: 18px 10px;
+    padding: 16px 10px;
   }
 
   .top-bar {
@@ -1125,34 +1127,31 @@ tr:hover { background: rgba(255,255,255,0.03); }
     padding: 0 18px;
   }
 
+  .admin-tools {
+    gap: 12px;
+  }
+
+  .folder-form,
+  .upload-form {
+    flex-wrap: wrap;
+  }
+
+  .upload-dropzone,
+  .tool-group input[type="text"] {
+    flex-basis: 100%;
+  }
+
   .storage-header {
-    flex-direction: column;
+    flex-direction: row;
   }
 
   table {
-    min-width: 0;
-  }
-
-  th:nth-child(2), td:nth-child(2) { display: none; }
-
-  th:last-child,
-  td:last-child {
-    width: 136px;
-  }
-
-  td .btn {
-    width: 100%;
-    min-width: 0;
-  }
-
-  td form,
-  .file-actions {
-    width: 100%;
+    min-width: 720px;
   }
 
   .file-actions {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
   }
 }
 </style>
