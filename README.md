@@ -9,7 +9,7 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
 - **Parallel Uploads + Progress**: Multi-file upload with parallel workers and real-time progress bar.
 - **Folder Support**: Create and manage folders (prefixes) to organize your storage.
 - **File Search**: Real-time search functionality to find your files quickly.
-- **Previews**: Built-in preview support for images, videos, audio, and PDF files.
+- **Previews**: Built-in preview support for images, videos, audio, PDF, and Text files.
 - **Text Editor**: Edit `.txt` files directly in the browser.
 - **Secure Access**: Authentication system using HMAC-signed cookies for secure sessions.
 - **Storage Insights**: Real-time storage usage tracking and progress bar.
@@ -27,6 +27,7 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
 
 1. **Bucket & KV Bindings**:
    Update `wrangler.jsonc` with your R2 bucket name and KV namespace ID:
+
    ```jsonc
    "r2_buckets": [
      {
@@ -55,6 +56,7 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
    - `R2_BUCKET_NAME` (optional): Bucket name used for presigned upload (defaults to `chizui-files` in code).
 
    You can set these using Wrangler:
+
    ```bash
    npx wrangler secret put USERNAME
    npx wrangler secret put PASSWORD
@@ -71,24 +73,26 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
    In your bucket settings, set CORS policy like this (adjust your domain):
    ```json
    [
-     {
-       "AllowedOrigins": ["https://files.chizui.dev"],
-       "AllowedMethods": ["GET", "HEAD", "PUT"],
-       "AllowedHeaders": ["*"],
-       "ExposeHeaders": ["ETag"],
-       "MaxAgeSeconds": 3600
-     }
+   	{
+   		"AllowedOrigins": ["https://files.chizui.dev"],
+   		"AllowedMethods": ["GET", "HEAD", "PUT"],
+   		"AllowedHeaders": ["*"],
+   		"ExposeHeaders": ["ETag"],
+   		"MaxAgeSeconds": 3600
+   	}
    ]
    ```
 
 ## 💻 Local Development
 
 1. Install dependencies:
+
    ```bash
    npm install
    ```
 
 2. Start the development server:
+
    ```bash
    npm run dev
    ```
@@ -109,6 +113,7 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
 ## 🚢 Deployment
 
 Deploy the worker to Cloudflare:
+
 ```bash
 npm run deploy
 ```

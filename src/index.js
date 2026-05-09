@@ -304,7 +304,11 @@ export default {
         headers.set("Content-Length", String(object.size));
       }
 
-      const contentType = headers.get("content-type") || guessContentType(rawPath);
+      const metadataContentType = headers.get("content-type");
+      const guessedContentType = guessContentType(rawPath);
+      const contentType = !metadataContentType || metadataContentType === "application/octet-stream"
+        ? guessedContentType
+        : metadataContentType;
       headers.set("Content-Type", contentType);
 
       const dispositionType = isDownload || !isPreviewable(contentType, rawPath)
@@ -1287,13 +1291,13 @@ function getFileType(filename) {
   const ext = filename.toLowerCase().split('.').pop();
   const map = {
     png: "Image PNG", jpg: "Image JPG", jpeg: "Image JPEG", zip: "Archive ZIP",
-    pdf: "Document PDF", txt: "Text TXT", js: "Code JS", html: "Code HTML"
+    pdf: "Document PDF", txt: "Text Files", js: "Code JS", html: "Code HTML"
   };
   return map[ext] || "File " + ext.toUpperCase();
 }
 
 function isPreviewable(filename) {
-  return /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv)$/i.test(filename);
+  return /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv|txt)$/i.test(filename);
 }
 
 function objectUrl(key, download) {
@@ -1823,7 +1827,8 @@ function isPreviewable(contentType, filename) {
   return (
     contentType.startsWith("image/") ||
     contentType.startsWith("video/") ||
-    /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv)$/i.test(filename)
+    contentType === "text/plain" ||
+    /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv|txt)$/i.test(filename)
   );
 }
 
