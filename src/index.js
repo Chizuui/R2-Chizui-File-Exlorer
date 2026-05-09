@@ -759,9 +759,16 @@ tr:hover { background: rgba(255,255,255,0.03); }
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .file-link:hover { color: var(--md-sys-color-primary); }
+
+.file-link .icon {
+  flex: 0 0 auto;
+}
 
 .type-badge {
   background: var(--md-sys-color-surface-variant);
@@ -951,6 +958,16 @@ tr:hover { background: rgba(255,255,255,0.03); }
   gap: 8px;
 }
 
+.search-form input {
+  width: 100%;
+  min-width: 0;
+}
+
+.search-wrap {
+  flex: 1;
+  max-width: 400px;
+}
+
 .clear-search-button {
   height: 48px;
   min-width: 82px;
@@ -960,24 +977,182 @@ tr:hover { background: rgba(255,255,255,0.03); }
 }
 
 @media (max-width: 768px) {
-  .top-bar { flex-direction: column; align-items: stretch; }
-  .admin-tools { align-items: stretch; }
+  .container {
+    padding: 24px 14px;
+  }
+
+  .top-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .path-container {
+    width: 100%;
+    padding: 0 18px;
+  }
+
+  .path-container h1 {
+    font-size: 16px;
+  }
+
+  .search-wrap {
+    width: 100%;
+    max-width: none;
+  }
+
+  .search-form input {
+    height: 44px !important;
+  }
+
+  .top-bar .actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .top-bar .actions .btn,
+  .top-bar .actions .role-badge {
+    flex: 0 0 auto;
+  }
+
+  .storage-card {
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .storage-header {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .admin-tools {
+    align-items: stretch;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
   .upload-form,
   .tool-group {
     width: 100%;
   }
+
   .folder-form {
     margin-left: 0;
   }
+
+  .folder-form,
+  .upload-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tool-group input[type="text"],
+  .tool-group .btn,
+  .upload-controls .btn {
+    width: 100%;
+  }
+
+  .upload-dropzone {
+    flex-basis: auto;
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .upload-dropzone strong {
+    white-space: normal;
+    text-align: center;
+  }
+
   .upload-controls {
+    width: 100%;
     justify-content: flex-start;
   }
+
+  .upload-chip {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .card {
+    border-radius: 20px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    min-width: 560px;
+  }
+
   th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display: none; }
+
   th:last-child,
   td:last-child {
     width: 170px;
     padding-left: 12px;
     padding-right: 12px;
+  }
+
+  th,
+  td {
+    padding: 14px 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: 18px 10px;
+  }
+
+  .top-bar {
+    gap: 8px;
+  }
+
+  .path-container {
+    height: 42px;
+  }
+
+  .search-form input {
+    height: 42px !important;
+    padding: 0 18px !important;
+  }
+
+  .top-bar .actions .btn,
+  .top-bar .actions .role-badge {
+    height: 38px;
+    padding: 0 18px;
+  }
+
+  .storage-header {
+    flex-direction: column;
+  }
+
+  table {
+    min-width: 0;
+  }
+
+  th:nth-child(2), td:nth-child(2) { display: none; }
+
+  th:last-child,
+  td:last-child {
+    width: 136px;
+  }
+
+  td .btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  td form,
+  .file-actions {
+    width: 100%;
+  }
+
+  .file-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
@@ -989,7 +1164,7 @@ tr:hover { background: rgba(255,255,255,0.03); }
       <span class="icon">📂</span>
       <h1>${isSearching ? `Search: "${escapeHtml(searchQuery)}"` : `/files/${escapeHtml(prefix)}`}</h1>
     </div>
-    <div style="flex:1; max-width: 400px;">
+    <div class="search-wrap">
       <form method="GET" action="/" class="search-form" onsubmit="return false;">
         <input type="text" id="search-input" name="q" placeholder="Search files/folders..." value="${escapeHtml(searchQuery || "")}" style="flex:1; background:var(--md-sys-color-surface-variant); border:none; padding:0 24px; height:48px; border-radius:24px; color:white; outline:none; font-family:'Outfit', sans-serif;">
         <a href="/?prefix=${encodeURIComponent(prefix)}" id="clear-search" class="btn btn-tonal clear-search-button" style="${isSearching ? "" : "display:none"}">Clear</a>
@@ -1384,6 +1559,7 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
+  padding: 20px;
 }
 .login-card {
   background: var(--md-sys-color-surface);
@@ -1434,6 +1610,17 @@ button {
 button:active { transform: scale(0.98); }
 .error { color: #F2B8B5; background: rgba(242,184,181,0.1); padding: 12px; border-radius: 12px; margin-bottom: 16px; text-align: center; }
 .back { display: block; text-align: center; margin-top: 24px; color: var(--md-sys-color-primary); text-decoration: none; font-size: 14px; }
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 28px 22px;
+    border-radius: 24px;
+  }
+
+  h2 {
+    font-size: 28px;
+  }
+}
 </style>
 </head>
 <body>
@@ -1503,6 +1690,32 @@ textarea {
 }
 .btn-save { background: var(--md-sys-color-primary); color: #381E72; }
 .btn-cancel { background: transparent; border: 1px solid var(--md-sys-color-outline); color: #fff; }
+
+@media (max-width: 600px) {
+  body {
+    padding: 24px 12px;
+  }
+
+  h2 {
+    font-size: 20px;
+    overflow-wrap: anywhere;
+  }
+
+  textarea {
+    height: 58vh;
+    padding: 16px;
+    font-size: 14px;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .btn {
+    width: 100%;
+    text-align: center;
+  }
+}
 </style>
 </head>
 <body>
