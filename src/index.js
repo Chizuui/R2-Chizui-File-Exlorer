@@ -13,6 +13,23 @@ export default {
 
     // LOGIN
     if (url.pathname === "/login") {
+      const ip = request.headers.get("CF-Connecting-IP") || "127.0.0.1";
+      const failKey = `login_fail_count:${ip}`;
+      let failCount = 0;
+
+      if (env.STATS) {
+        try {
+          const stored = await env.STATS.get(failKey);
+          failCount = stored ? parseInt(stored, 10) : 0;
+        } catch (e) {
+          console.error("KV Read Error:", e);
+        }
+      }
+
+      if (failCount >= 3) {
+        return html(loginPage("IP Anda diblokir sementara karena terlalu banyak percobaan login salah (batas salah: 2 kali). Silakan coba lagi nanti."), 429);
+      }
+
       if (request.method === "POST") {
         const form = await request.formData();
         const user = form.get("username");
@@ -34,6 +51,14 @@ export default {
             : "";
 
         if (role) {
+          if (env.STATS) {
+            try {
+              await env.STATS.delete(failKey);
+            } catch (e) {
+              console.error("KV Delete Error:", e);
+            }
+          }
+
           const expiration = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE;
           const fingerprint = await sessionFingerprint(request, env);
           const payload = `${role}:${expiration}:${fingerprint}`;
@@ -49,7 +74,20 @@ export default {
           });
         }
 
-        return html(loginPage("Username atau password salah"), 401);
+        const newFailCount = failCount + 1;
+        if (env.STATS) {
+          try {
+            await env.STATS.put(failKey, newFailCount.toString(), { expirationTtl: 900 });
+          } catch (e) {
+            console.error("KV Put Error:", e);
+          }
+        }
+
+        if (newFailCount >= 3) {
+          return html(loginPage("Username atau password salah. IP Anda telah diblokir sementara selama 15 menit."), 429);
+        }
+
+        return html(loginPage(`Username atau password salah. Sisa percobaan: ${3 - newFailCount}`), 401);
       }
 
       return html(loginPage(""));
