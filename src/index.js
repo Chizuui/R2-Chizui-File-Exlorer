@@ -6,6 +6,33 @@ const SESSION_MAX_AGE = 1800; // 30 menit
 // Ubah ini kalau mau limit storage beda
 const STORAGE_LIMIT = 10 * 1024 * 1024 * 1024; // 10 GB
 
+function getFolderStats(folderKey, allFiles) {
+  let size = 0;
+  let lastModified = 0;
+  let hasFiles = false;
+
+  for (const file of allFiles) {
+    if (file.key.startsWith(folderKey) && file.key !== folderKey) {
+      size += file.size || 0;
+      const uploadedTime = new Date(file.uploaded).getTime();
+      if (uploadedTime > lastModified) {
+        lastModified = uploadedTime;
+      }
+      hasFiles = true;
+    }
+  }
+
+  return {
+    size: hasFiles ? size : 0,
+    lastModified: hasFiles ? lastModified : null
+  };
+}
+
+function isEditableTextFile(filename) {
+  const ext = filename.toLowerCase().split(".").pop();
+  return ["txt", "json", "bat", "ps1", "py", "js", "css", "html", "sh", "yml", "yaml", "ini", "conf", "md", "ts", "xml", "jsonc"].includes(ext);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -197,13 +224,18 @@ export default {
         const requestedType = String(payload?.contentType || "");
         const contentType = requestedType || guessContentType(filename);
 
-        const safeName = filename.replace(/^\/+/, "").split("/").pop();
-        if (!safeName) {
+        const safePath = filename
+          .replace(/^\/+/, "")
+          .split("/")
+          .filter(segment => segment !== ".." && segment !== ".")
+          .join("/");
+
+        if (!safePath) {
           return new Response("Filename invalid", { status: 400 });
         }
 
         const cleanPrefix = sanitizePrefix(prefix);
-        const key = cleanPrefix + safeName;
+        const key = cleanPrefix + safePath;
         const encodedKey = encodeR2ObjectKey(key);
 
         const endpoint = new URL(`https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${encodedKey}`);
@@ -298,7 +330,7 @@ export default {
         const formData = await request.formData();
         const content = formData.get("content");
         await env.BUCKET.put(key, content, {
-          httpMetadata: { contentType: "text/plain" }
+          httpMetadata: { contentType: guessContentType(key) }
         });
         const prefix = getParentPrefix(key);
         return Response.redirect(url.origin + "/?prefix=" + encodeURIComponent(prefix), 302);
@@ -400,16 +432,27 @@ export default {
         const previewable = isPreviewable(type, file.key);
         const isFolder = file.key.endsWith("/") && file.size === 0;
 
+        let fileSizeStr = isFolder ? "-" : formatBytes(file.size);
+        let fileModifiedStr = new Date(file.uploaded).toLocaleString();
+        let fileUploadedMs = isFolder ? 0 : new Date(file.uploaded).getTime();
+
+        if (isFolder) {
+          const folderStats = getFolderStats(file.key, allFiles);
+          fileSizeStr = folderStats.size > 0 ? formatBytes(folderStats.size) : "-";
+          fileModifiedStr = folderStats.lastModified ? new Date(folderStats.lastModified).toLocaleString() : "-";
+          fileUploadedMs = folderStats.lastModified || 0;
+        }
+
         rows += `
-<tr>
+<tr data-uploaded="${fileUploadedMs}" data-is-folder="${isFolder}" data-is-parent="false" data-name="${escapeHtml(file.key.toLowerCase())}">
   <td>
     <a class="file-link" href="${objectUrl(url.origin, file.key)}" ${previewable ? `target="_blank"` : ""}>
-      <span class="icon">${isFolder ? "📁" : getIcon(file.key)}</span>${escapeHtml(file.key)}
+      <span class="material-symbols-outlined icon">${isFolder ? "folder" : getIcon(file.key)}</span>${escapeHtml(file.key)}
     </a>
   </td>
   <td><span class="type-badge">${isFolder ? "Folder" : getFileType(file.key)}</span></td>
-  <td>${isFolder ? "-" : formatBytes(file.size)}</td>
-  <td>${new Date(file.uploaded).toLocaleString()}</td>
+  <td>${fileSizeStr}</td>
+  <td>${fileModifiedStr}</td>
   <td>
     <div class="file-actions">
       ${isFolder ? `<a class="btn btn-tonal" href="/?prefix=${encodeURIComponent(file.key)}">Open</a>` : `
@@ -430,10 +473,10 @@ export default {
       if (prefix) {
         const parent = getParentPrefix(prefix);
         rows += `
-<tr>
+<tr data-uploaded="0" data-is-folder="true" data-is-parent="true">
   <td>
     <a class="file-link" href="/${parent ? `?prefix=${encodeURIComponent(parent)}` : ""}">
-      <span class="icon">⬅️</span> Parent directory/
+      <span class="material-symbols-outlined icon">arrow_upward</span> Parent directory/
     </a>
   </td>
   <td><span class="type-badge">Folder</span></td>
@@ -445,17 +488,21 @@ export default {
 
       for (const folder of listed.delimitedPrefixes || []) {
         const folderName = folder.replace(prefix, "");
+        const folderStats = getFolderStats(folder, allFiles);
+        const folderSizeStr = folderStats.size > 0 ? formatBytes(folderStats.size) : "-";
+        const folderModifiedStr = folderStats.lastModified ? new Date(folderStats.lastModified).toLocaleString() : "-";
+        const folderUploadedMs = folderStats.lastModified || 0;
 
         rows += `
-<tr>
+<tr data-uploaded="${folderUploadedMs}" data-is-folder="true" data-is-parent="false" data-name="${escapeHtml(folderName.toLowerCase())}">
   <td>
     <a class="file-link" href="/?prefix=${encodeURIComponent(folder)}">
-      <span class="icon">📁</span>${escapeHtml(folderName)}
+      <span class="material-symbols-outlined icon">folder</span>${escapeHtml(folderName)}
     </a>
   </td>
   <td><span class="type-badge">Folder</span></td>
-  <td>-</td>
-  <td>-</td>
+  <td>${folderSizeStr}</td>
+  <td>${folderModifiedStr}</td>
   <td>
     <div class="file-actions">
       <a class="btn btn-tonal" href="/?prefix=${encodeURIComponent(folder)}">Open</a>
@@ -481,10 +528,10 @@ export default {
         const previewable = isPreviewable(type, file.key);
 
         rows += `
-<tr>
+<tr data-uploaded="${new Date(file.uploaded).getTime()}" data-is-folder="false" data-is-parent="false" data-name="${escapeHtml(displayName.toLowerCase())}">
   <td>
     <a class="file-link" href="${objectUrl(url.origin, file.key)}" ${previewable ? `target="_blank"` : ""}>
-      <span class="icon">${getIcon(file.key)}</span>${escapeHtml(displayName)}
+      <span class="material-symbols-outlined icon">${getIcon(file.key)}</span>${escapeHtml(displayName)}
     </a>
   </td>
   <td><span class="type-badge">${getFileType(file.key)}</span></td>
@@ -494,7 +541,7 @@ export default {
     <div class="file-actions">
       ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
       <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
-      ${isAdminUser && file.key.toLowerCase().endsWith(".txt") ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
+      ${isAdminUser && isEditableTextFile(file.key) ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
       ${isAdminUser ? `
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus file ini?')">
         <input type="hidden" name="key" value="${escapeHtml(file.key)}">
@@ -578,7 +625,15 @@ function mainPage({ rows, isAdmin, userRole, prefix, storageUsed, storageLimit, 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Files — ${escapeHtml(prefix || "Root")}</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&family=Roboto+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
 <style>
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 :root {
   --md-sys-color-primary: #D0BCFF;
   --md-sys-color-on-primary: #381E72;
@@ -1202,7 +1257,7 @@ tr:hover { background: rgba(255,255,255,0.03); }
 <div class="container">
   <div class="top-bar">
     <div class="path-container">
-      <span class="icon">📂</span>
+      <span class="material-symbols-outlined icon" style="font-size: 24px;">folder_open</span>
       <h1>${isSearching ? `Search: "${escapeHtml(searchQuery)}"` : `/files/${escapeHtml(prefix)}`}</h1>
     </div>
     <div class="search-wrap">
@@ -1231,13 +1286,15 @@ tr:hover { background: rgba(255,255,255,0.03); }
   <div class="admin-tools">
       <form method="POST" action="/upload" enctype="multipart/form-data" class="tool-group admin-row upload-form" id="upload-form">
         <input type="hidden" name="prefix" value="${escapeHtml(prefix)}">
-        <input type="file" name="files" id="upload-input" class="upload-input" multiple required>
+        <input type="file" name="files" id="upload-input" class="upload-input" multiple>
+        <input type="file" id="upload-folder-input" class="upload-input" webkitdirectory directory multiple style="position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;">
         <label for="upload-input" class="upload-dropzone" id="upload-dropzone">
-          <strong>Drag files here to upload</strong>
+          <strong>Drag files/folders here to upload</strong>
           <span>or click to choose files</span>
         </label>
         <div class="upload-controls">
           <button type="submit" class="btn btn-filled">Upload</button>
+          <button type="button" class="btn btn-tonal" id="btn-upload-folder">Upload Folder</button>
           <button type="button" class="btn btn-outlined upload-clear" id="clear-upload" style="display:none">Clear</button>
         </div>
         <div class="upload-list" id="upload-list"></div>
@@ -1259,10 +1316,10 @@ tr:hover { background: rgba(255,255,255,0.03); }
     <table>
       <thead>
         <tr>
-          <th>Name</th>
+          <th id="th-name" style="cursor: pointer; user-select: none;">Name <span id="sort-icon-name" class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">unfold_more</span></th>
           <th>Type</th>
           <th>Size</th>
-          <th>Modified</th>
+          <th id="th-modified" style="cursor: pointer; user-select: none;">Modified <span id="sort-icon" class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">unfold_more</span></th>
           <th>Action</th>
         </tr>
       </thead>
@@ -1282,6 +1339,10 @@ tr:hover { background: rgba(255,255,255,0.03); }
 <script>
 const ALL_FILES = ${JSON.stringify(allFiles)};
 const IS_ADMIN = ${isAdmin};
+function isEditableTextFile(filename) {
+  const ext = filename.toLowerCase().split('.').pop();
+  return ['txt', 'json', 'bat', 'ps1', 'py', 'js', 'css', 'html', 'sh', 'yml', 'yaml', 'ini', 'conf', 'md', 'ts', 'xml', 'jsonc'].includes(ext);
+}
 const USER_ROLE = ${JSON.stringify(userRole)};
 const CURRENT_PREFIX = ${JSON.stringify(prefix)};
 const APP_ORIGIN = ${JSON.stringify(origin)};
@@ -1307,6 +1368,10 @@ function resetSearch() {
   tableBody.innerHTML = INITIAL_ROWS;
   clearBtn.style.display = 'none';
   pathTitle.innerText = '/files/' + CURRENT_PREFIX;
+  const sortIcon = document.getElementById('sort-icon');
+  if (sortIcon) sortIcon.textContent = 'unfold_more';
+  const sortIconName = document.getElementById('sort-icon-name');
+  if (sortIconName) sortIconName.textContent = 'unfold_more';
 }
 
 function formatBytes(bytes) {
@@ -1318,11 +1383,12 @@ function formatBytes(bytes) {
 
 function getIcon(filename) {
   const ext = filename.toLowerCase().split('.').pop();
-  if (['png','jpg','jpeg','gif','webp','svg'].includes(ext)) return "🖼️";
-  if (['mp4','webm','mov','mkv'].includes(ext)) return "🎬";
-  if (['mp3','wav','flac','ogg'].includes(ext)) return "🎵";
-  if (['zip','rar','7z'].includes(ext)) return "📦";
-  return "📄";
+  if (['png','jpg','jpeg','gif','webp','svg'].includes(ext)) return "image";
+  if (['mp4','webm','mov','mkv'].includes(ext)) return "movie";
+  if (['mp3','wav','flac','ogg'].includes(ext)) return "audiotrack";
+  if (['zip','rar','7z','tar','gz'].includes(ext)) return "archive";
+  if (ext === 'pdf') return "description";
+  return "insert_drive_file";
 }
 
 function getFileType(filename) {
@@ -1342,6 +1408,28 @@ function objectUrl(key, download) {
   const url = new URL('/' + String(key).split('/').map(encodeURIComponent).join('/'), APP_ORIGIN || window.location.origin);
   if (download) url.searchParams.set('download', '1');
   return url.toString();
+}
+
+function getFolderStats(folderKey) {
+  let size = 0;
+  let lastModified = 0;
+  let hasFiles = false;
+
+  for (const file of ALL_FILES) {
+    if (file.key.indexOf(folderKey) === 0 && file.key !== folderKey) {
+      size += file.size || 0;
+      const uploadedTime = new Date(file.uploaded).getTime();
+      if (uploadedTime > lastModified) {
+        lastModified = uploadedTime;
+      }
+      hasFiles = true;
+    }
+  }
+
+  return {
+    size: hasFiles ? size : 0,
+    lastModified: hasFiles ? lastModified : null
+  };
 }
 
 searchInput.addEventListener('input', (e) => {
@@ -1366,21 +1454,33 @@ searchInput.addEventListener('input', (e) => {
     const isFolder = f.key.endsWith('/') && f.size === 0;
     const previewable = isPreviewable(f.key);
     
+    let fileSizeStr = isFolder ? '-' : formatBytes(f.size);
+    let fileModifiedStr = new Date(f.uploaded).toLocaleString();
+    let fileUploadedMs = isFolder ? 0 : new Date(f.uploaded).getTime();
+
+    if (isFolder) {
+      const stats = getFolderStats(f.key);
+      fileSizeStr = stats.size > 0 ? formatBytes(stats.size) : '-';
+      fileModifiedStr = stats.lastModified ? new Date(stats.lastModified).toLocaleString() : '-';
+      fileUploadedMs = stats.lastModified || 0;
+    }
+    
     return \`
-<tr>
+<tr data-uploaded="\${fileUploadedMs}" data-is-folder="\${isFolder ? 'true' : 'false'}" data-is-parent="false" data-name="\${f.key.toLowerCase()}">
   <td>
     <a class="file-link" href="\${objectUrl(f.key)}" \${previewable ? 'target="_blank"' : ''}>
-      <span class="icon">\${isFolder ? '📁' : getIcon(f.key)}</span>\${f.key}
+      <span class="material-symbols-outlined icon">\${isFolder ? 'folder' : getIcon(f.key)}</span>\${f.key}
     </a>
   </td>
   <td><span class="type-badge">\${isFolder ? 'Folder' : getFileType(f.key)}</span></td>
-  <td>\${isFolder ? '-' : formatBytes(f.size)}</td>
-  <td>\${new Date(f.uploaded).toLocaleString()}</td>
+  <td>\${fileSizeStr}</td>
+  <td>\${fileModifiedStr}</td>
   <td>
     <div class="file-actions">
       \${isFolder ? \`<a class="btn btn-tonal" href="/?prefix=\${encodeURIComponent(f.key)}">Open</a>\` : \`
         \${previewable ? \`<a class="btn btn-tonal" href="\${objectUrl(f.key)}" target="_blank">Preview</a>\` : ''}
         <a class="btn btn-outlined" href="\${objectUrl(f.key, true)}">Download</a>
+        \${IS_ADMIN && isEditableTextFile(f.key) ? \`<a class="btn btn-tonal" href="/edit?key=\${encodeURIComponent(f.key)}">Edit</a>\` : ''}
       \`}
       \${IS_ADMIN ? \`
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus \${isFolder ? 'folder' : 'file'} ini?')">
@@ -1400,33 +1500,118 @@ clearBtn.addEventListener('click', (e) => {
   searchInput.focus();
 });
 
+const thModified = document.getElementById('th-modified');
+const sortIcon = document.getElementById('sort-icon');
+const thName = document.getElementById('th-name');
+const sortIconName = document.getElementById('sort-icon-name');
+
+if (thModified) {
+  let sortOrder = 'desc'; // 'desc' = newest first, 'asc' = oldest first
+  thModified.addEventListener('click', () => {
+    sortOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+    sortIcon.textContent = sortOrder === 'desc' ? 'arrow_downward' : 'arrow_upward';
+    if (sortIconName) sortIconName.textContent = 'unfold_more';
+
+    const rows = Array.from(tableBody.querySelectorAll('tr'));
+
+    // Separate parent row, folders, and files
+    const parentRow = rows.find(r => r.getAttribute('data-is-parent') === 'true');
+    const folderRows = rows.filter(r => r.getAttribute('data-is-folder') === 'true' && r.getAttribute('data-is-parent') !== 'true');
+    const fileRows = rows.filter(r => r.getAttribute('data-is-folder') === 'false');
+
+    // Sort folders and files by data-uploaded
+    const sortRows = (a, b) => {
+      const timeA = parseInt(a.getAttribute('data-uploaded') || 0);
+      const timeB = parseInt(b.getAttribute('data-uploaded') || 0);
+      return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+    };
+
+    folderRows.sort(sortRows);
+    fileRows.sort(sortRows);
+
+    // Reconstruct tbody
+    tableBody.innerHTML = '';
+    if (parentRow) tableBody.appendChild(parentRow);
+    folderRows.forEach(r => tableBody.appendChild(r));
+    fileRows.forEach(r => tableBody.appendChild(r));
+  });
+}
+
+if (thName) {
+  let sortOrderName = 'asc'; // 'asc' = A-Z, 'desc' = Z-A
+  thName.addEventListener('click', () => {
+    sortOrderName = sortOrderName === 'asc' ? 'desc' : 'asc';
+    sortIconName.textContent = sortOrderName === 'asc' ? 'arrow_upward' : 'arrow_downward';
+    if (sortIcon) sortIcon.textContent = 'unfold_more';
+
+    const rows = Array.from(tableBody.querySelectorAll('tr'));
+
+    // Separate parent row, folders, and files
+    const parentRow = rows.find(r => r.getAttribute('data-is-parent') === 'true');
+    const folderRows = rows.filter(r => r.getAttribute('data-is-folder') === 'true' && r.getAttribute('data-is-parent') !== 'true');
+    const fileRows = rows.filter(r => r.getAttribute('data-is-folder') === 'false');
+
+    // Sort folders and files by data-name
+    const sortRowsName = (a, b) => {
+      const nameA = a.getAttribute('data-name') || '';
+      const nameB = b.getAttribute('data-name') || '';
+      return sortOrderName === 'asc' ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+    };
+
+    folderRows.sort(sortRowsName);
+    fileRows.sort(sortRowsName);
+
+    // Reconstruct tbody
+    tableBody.innerHTML = '';
+    if (parentRow) tableBody.appendChild(parentRow);
+    folderRows.forEach(r => tableBody.appendChild(r));
+    fileRows.forEach(r => tableBody.appendChild(r));
+  });
+}
+
+let selectedFiles = [];
+
 function renderUploadList() {
-  if (!uploadInput || !uploadList || !clearUploadBtn) return;
+  if (!uploadList || !clearUploadBtn) return;
 
-  const files = Array.from(uploadInput.files || []);
   uploadList.innerHTML = '';
-  uploadList.classList.toggle('has-files', files.length > 0);
-  clearUploadBtn.style.display = files.length > 0 ? 'inline-flex' : 'none';
+  uploadList.classList.toggle('has-files', selectedFiles.length > 0);
+  clearUploadBtn.style.display = selectedFiles.length > 0 ? 'inline-flex' : 'none';
 
-  if (files.length > 0) {
+  if (selectedFiles.length > 0) {
     const chip = document.createElement('span');
     chip.className = 'upload-chip';
-    chip.textContent = files.length + (files.length === 1 ? ' file selected' : ' files selected');
+    chip.textContent = selectedFiles.length + (selectedFiles.length === 1 ? ' item selected' : ' items selected');
     uploadList.appendChild(chip);
   }
 }
 
-function setUploadFiles(files) {
-  if (!uploadInput) return;
+const uploadFolderInput = document.getElementById('upload-folder-input');
+const btnUploadFolder = document.getElementById('btn-upload-folder');
 
-  const transfer = new DataTransfer();
-  for (const file of files) transfer.items.add(file);
-  uploadInput.files = transfer.files;
+if (btnUploadFolder && uploadFolderInput) {
+  btnUploadFolder.addEventListener('click', () => {
+    uploadFolderInput.click();
+  });
+}
+
+function handleFileSelection(files) {
+  for (const file of files) {
+    selectedFiles.push(file);
+  }
   renderUploadList();
 }
 
 if (uploadInput && uploadDropzone) {
-  uploadInput.addEventListener('change', renderUploadList);
+  uploadInput.addEventListener('change', (e) => {
+    handleFileSelection(e.target.files);
+  });
+
+  if (uploadFolderInput) {
+    uploadFolderInput.addEventListener('change', (e) => {
+      handleFileSelection(e.target.files);
+    });
+  }
 
   for (const eventName of ['dragenter', 'dragover']) {
     uploadDropzone.addEventListener(eventName, (e) => {
@@ -1442,14 +1627,57 @@ if (uploadInput && uploadDropzone) {
     });
   }
 
-  uploadDropzone.addEventListener('drop', (e) => {
-    setUploadFiles(e.dataTransfer.files);
+  uploadDropzone.addEventListener('drop', async (e) => {
+    const items = e.dataTransfer.items;
+    if (items) {
+      const files = [];
+      const traverse = async (entry, path = "") => {
+        if (entry.isFile) {
+          const file = await new Promise((resolve) => entry.file(resolve));
+          Object.defineProperty(file, 'webkitRelativePath', {
+            value: path + file.name,
+            writable: true
+          });
+          files.push(file);
+        } else if (entry.isDirectory) {
+          const dirReader = entry.createReader();
+          let allEntries = [];
+          const readEntries = async () => {
+            const results = await new Promise((resolve) => dirReader.readEntries(resolve));
+            if (results.length > 0) {
+              allEntries = allEntries.concat(results);
+              await readEntries();
+            }
+          };
+          await readEntries();
+          for (const childEntry of allEntries) {
+            await traverse(childEntry, path + entry.name + "/");
+          }
+        }
+      };
+
+      const promises = [];
+      for (let i = 0; i < items.length; i++) {
+        const entry = items[i].webkitGetAsEntry();
+        if (entry) {
+          promises.push(traverse(entry));
+        }
+      }
+      await Promise.all(promises);
+      if (files.length > 0) {
+        handleFileSelection(files);
+      }
+    } else {
+      handleFileSelection(e.dataTransfer.files);
+    }
   });
 }
 
-if (clearUploadBtn && uploadInput) {
+if (clearUploadBtn) {
   clearUploadBtn.addEventListener('click', () => {
-    uploadInput.value = '';
+    if (uploadInput) uploadInput.value = '';
+    if (uploadFolderInput) uploadFolderInput.value = '';
+    selectedFiles = [];
     renderUploadList();
   });
 }
@@ -1457,9 +1685,9 @@ if (clearUploadBtn && uploadInput) {
 if (uploadForm) {
   uploadForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (isUploading || !uploadInput) return;
+    if (isUploading) return;
 
-    const files = Array.from(uploadInput.files || []);
+    const files = selectedFiles;
     if (files.length === 0) return;
 
     const submitButton = uploadForm.querySelector('button[type="submit"]');
@@ -1527,7 +1755,7 @@ if (uploadForm) {
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
             body: JSON.stringify({
-              filename: file.name,
+              filename: file.webkitRelativePath || file.name,
               prefix: prefixValue,
               contentType: file.type || 'application/octet-stream'
             })
@@ -1561,7 +1789,7 @@ if (uploadForm) {
       if (uploadProgress) uploadProgress.classList.remove('is-active');
       if (uploadProgressBar) uploadProgressBar.style.width = '0%';
       if (uploadProgressText) uploadProgressText.textContent = '';
-      if (uploadInput && uploadInput.files && uploadInput.files.length > 0) {
+      if (selectedFiles.length > 0) {
         clearUploadBtn.style.display = 'inline-flex';
       }
     }
@@ -1952,14 +2180,13 @@ function getFileType(filename) {
 
 function getIcon(filename) {
   const type = guessContentType(filename);
-  if (type.startsWith("image/")) return "🖼️";
-  if (type.startsWith("video/")) return "🎬";
-  if (type.startsWith("audio/")) return "🎵";
-  if (filename.toLowerCase().endsWith(".zip")) return "📦";
-  if (filename.toLowerCase().endsWith(".rar")) return "📦";
-  if (filename.toLowerCase().endsWith(".7z")) return "📦";
-  if (filename.toLowerCase().endsWith(".pdf")) return "📄";
-  return "📄";
+  if (type.startsWith("image/")) return "image";
+  if (type.startsWith("video/")) return "movie";
+  if (type.startsWith("audio/")) return "audiotrack";
+  const ext = filename.toLowerCase().split(".").pop();
+  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "archive";
+  if (ext === "pdf") return "description";
+  return "insert_drive_file";
 }
 
 function formatBytes(bytes) {
