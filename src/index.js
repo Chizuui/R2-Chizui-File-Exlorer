@@ -376,9 +376,14 @@ export default {
 
       const metadataContentType = headers.get("content-type");
       const guessedContentType = guessContentType(rawPath);
-      const contentType = !metadataContentType || metadataContentType === "application/octet-stream"
+      let contentType = !metadataContentType || metadataContentType === "application/octet-stream"
         ? guessedContentType
         : metadataContentType;
+
+      if (isEditableTextFile(rawPath)) {
+        contentType = guessedContentType;
+      }
+
       headers.set("Content-Type", contentType);
 
       const dispositionType = isDownload || !isPreviewable(contentType, rawPath)
