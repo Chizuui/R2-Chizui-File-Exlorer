@@ -4,13 +4,13 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
 
 ## 🚀 Features
 
-- **File Management**: Upload, download, and delete files with ease.
+- **Folder Upload & Preservation**: Select entire folders to upload or simply drag-and-drop folders recursively. Folder tree structures are preserved flawlessly in R2.
 - **Fast Upload Path**: Browser uploads directly to R2 using presigned URLs for better throughput.
 - **Parallel Uploads + Progress**: Multi-file upload with parallel workers and real-time progress bar.
-- **Folder Support**: Create and manage folders (prefixes) to organize your storage.
-- **File Search**: Real-time search functionality to find your files quickly.
-- **Previews**: Built-in preview support for images, videos, audio, PDF, and Text files.
-- **Text Editor**: Edit `.txt` files directly in the browser.
+- **Advanced Interactive Sorting**: Clicking columns **Name** or **Modified** dynamically sorts items (ascending or descending) with folders kept elegantly grouped at the top.
+- **In-Memory Folder Stats**: Size and modification dates of folders are calculated instantly **in memory** from existing metadata, preventing R2 API overload completely.
+- **Code & Script Editor + Previews**: Preview and edit common file formats directly in your browser. Fully supports: `.txt`, `.json`, `.bat`, `.ps1`, `.py`, `.js`, `.ts`, `.css`, `.html`, `.sh`, `.yml`, `.yaml`, `.ini`, `.conf`, `.md`, `.xml`, and `.jsonc`.
+- **Google Material Symbols Design**: Sleek UI modernization featuring vector Google Material Symbols instead of standard emojis.
 - **Secure Access**: Authentication system using HMAC-signed cookies for secure sessions.
 - **Storage Insights**: Real-time storage usage tracking and progress bar.
 - **Visitor Analytics**: Integrated visitor counter using Cloudflare KV.
@@ -70,7 +70,7 @@ A modern, lightweight file manager built on **Cloudflare Workers**, **R2 Storage
    ```
 
 3. **R2 CORS Policy (Required for Browser Direct Upload)**:
-   In your bucket settings, set CORS policy like this (adjust your domain):
+   In your R2 bucket settings, set a CORS policy like this (adjust your domain):
    ```json
    [
    	{

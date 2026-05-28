@@ -1401,7 +1401,7 @@ function getFileType(filename) {
 }
 
 function isPreviewable(filename) {
-  return /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv|txt)$/i.test(filename);
+  return isEditableTextFile(filename) || /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv|txt)$/i.test(filename);
 }
 
 function objectUrl(key, download) {
@@ -2094,6 +2094,7 @@ function isPreviewable(contentType, filename) {
     contentType.startsWith("image/") ||
     contentType.startsWith("video/") ||
     contentType === "text/plain" ||
+    isEditableTextFile(filename) ||
     /\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mov|mkv|txt)$/i.test(filename)
   );
 }
@@ -2123,7 +2124,19 @@ function guessContentType(filename) {
     json: "application/json",
     html: "text/html",
     css: "text/css",
-    js: "application/javascript"
+    js: "application/javascript",
+    py: "text/plain",
+    bat: "text/plain",
+    ps1: "text/plain",
+    sh: "text/plain",
+    yml: "text/plain",
+    yaml: "text/plain",
+    ini: "text/plain",
+    conf: "text/plain",
+    md: "text/plain",
+    jsonc: "text/plain",
+    ts: "text/plain",
+    xml: "text/xml"
   };
   return map[ext] || "application/octet-stream";
 }
