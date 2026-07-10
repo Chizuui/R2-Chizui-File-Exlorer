@@ -168,3 +168,4 @@ dist
 worker-configuration.d.ts
 AGENTS.md
 TESTING.md
+.vscode/

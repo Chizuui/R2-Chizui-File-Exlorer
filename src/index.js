@@ -343,11 +343,40 @@ export default {
       return html(editPage(key, content));
     }
 
+    // GET CURL COMMAND
+    if (url.pathname === "/curl-cmd") {
+      const session = await getSession(request, env);
+      if (!session) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const key = url.searchParams.get("key");
+      if (!key) {
+        return new Response("Key required", { status: 400 });
+      }
+
+      const filename = key.split("/").pop() || "download";
+      const signature = await sign(key, env.SECRET_KEY);
+      const downloadUrl = `${url.origin}/${encodeObjectPath(key)}?token=${signature}`;
+      
+      const curlCommand = `curl -L -o "%temp%\\${filename}" "${downloadUrl}"`;
+      return new Response(curlCommand, {
+        headers: { "Content-Type": "text/plain; charset=UTF-8" }
+      });
+    }
+
     // DOWNLOAD / PREVIEW FILE
     if (rawPath) {
       const session = await getSession(request, env);
       if (!session) {
-        return redirectToLogin(url);
+        const token = url.searchParams.get("token");
+        if (!token || !env.SECRET_KEY) {
+          return redirectToLogin(url);
+        }
+        const expectedToken = await sign(rawPath, env.SECRET_KEY);
+        if (token !== expectedToken) {
+          return redirectToLogin(url);
+        }
       }
 
       const isDownload = url.searchParams.get("download") === "1";
@@ -463,6 +492,7 @@ export default {
       ${isFolder ? `<a class="btn btn-tonal" href="/?prefix=${encodeURIComponent(file.key)}">Open</a>` : `
         ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
         <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
+        <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
       `}
     </div>
   </td>
@@ -546,6 +576,7 @@ export default {
     <div class="file-actions">
       ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
       <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
+      <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
       ${isAdminUser && isEditableTextFile(file.key) ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
       ${isAdminUser ? `
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus file ini?')">
@@ -638,6 +669,13 @@ function mainPage({ rows, isAdmin, userRole, prefix, storageUsed, storageLimit, 
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 1s linear infinite;
 }
 :root {
   --md-sys-color-primary: #D0BCFF;
@@ -1348,6 +1386,45 @@ function isEditableTextFile(filename) {
   const ext = filename.toLowerCase().split('.').pop();
   return ['txt', 'json', 'bat', 'ps1', 'py', 'js', 'css', 'html', 'sh', 'yml', 'yaml', 'ini', 'conf', 'md', 'ts', 'xml', 'jsonc'].includes(ext);
 }
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  }[c]));
+}
+async function copyCurlCommand(button) {
+  const key = button.getAttribute('data-key');
+  if (!key) return;
+  const originalHtml = button.innerHTML;
+  try {
+    button.innerHTML = '<span class="material-symbols-outlined icon spin">sync</span> Loading...';
+    button.disabled = true;
+    const response = await fetch('/curl-cmd?key=' + encodeURIComponent(key));
+    if (!response.ok) throw new Error('Gagal mengambil command');
+    const command = await response.text();
+    await navigator.clipboard.writeText(command);
+    
+    button.innerHTML = '<span class="material-symbols-outlined icon">check</span> Copied!';
+    const originalColor = button.style.color;
+    const originalBorder = button.style.borderColor;
+    button.style.color = '#B3F6B3';
+    button.style.borderColor = '#B3F6B3';
+    
+    setTimeout(() => {
+      button.innerHTML = originalHtml;
+      button.style.color = originalColor;
+      button.style.borderColor = originalBorder;
+      button.disabled = false;
+    }, 2000);
+  } catch (err) {
+    alert('Gagal menyalin command curl: ' + err.message);
+    button.innerHTML = originalHtml;
+    button.disabled = false;
+  }
+}
 const USER_ROLE = ${JSON.stringify(userRole)};
 const CURRENT_PREFIX = ${JSON.stringify(prefix)};
 const APP_ORIGIN = ${JSON.stringify(origin)};
@@ -1485,6 +1562,7 @@ searchInput.addEventListener('input', (e) => {
       \${isFolder ? \`<a class="btn btn-tonal" href="/?prefix=\${encodeURIComponent(f.key)}">Open</a>\` : \`
         \${previewable ? \`<a class="btn btn-tonal" href="\${objectUrl(f.key)}" target="_blank">Preview</a>\` : ''}
         <a class="btn btn-outlined" href="\${objectUrl(f.key, true)}">Download</a>
+        <button class="btn btn-outlined btn-curl" data-key="\${escapeHtml(f.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
         \${IS_ADMIN && isEditableTextFile(f.key) ? \`<a class="btn btn-tonal" href="/edit?key=\${encodeURIComponent(f.key)}">Edit</a>\` : ''}
       \`}
       \${IS_ADMIN ? \`
