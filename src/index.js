@@ -623,7 +623,7 @@ export default {
     <div class="file-actions">
       ${isFolder ? `<a class="btn btn-tonal" href="/?prefix=${encodeURIComponent(file.key)}">Open</a>` : `
         ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
-        <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
+        <button class="btn btn-outlined" data-key="${escapeHtml(file.key)}" onclick="downloadViaShortLink(this, event)">Download</button>
         <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
         <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyDirectLink(this)"><span class="material-symbols-outlined icon">link</span> Link</button>
       `}
@@ -708,7 +708,7 @@ export default {
   <td>
     <div class="file-actions">
       ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
-      <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
+      <button class="btn btn-outlined" data-key="${escapeHtml(file.key)}" onclick="downloadViaShortLink(this, event)">Download</button>
       <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
       <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyDirectLink(this)"><span class="material-symbols-outlined icon">link</span> Link</button>
       ${isAdminUser && isEditableTextFile(file.key) ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
@@ -1589,6 +1589,29 @@ async function copyDirectLink(button) {
     button.disabled = false;
   }
 }
+async function downloadViaShortLink(button, event) {
+  event.preventDefault();
+  const key = button.getAttribute('data-key');
+  if (!key) return;
+  const originalHtml = button.innerHTML;
+  try {
+    button.innerHTML = '<span class="material-symbols-outlined icon spin">sync</span> Loading...';
+    button.disabled = true;
+    const response = await fetch('/download?key=' + encodeURIComponent(key));
+    if (!response.ok) throw new Error('Gagal mengambil link');
+    const link = await response.text();
+    window.location.href = link;
+    
+    setTimeout(() => {
+      button.innerHTML = originalHtml;
+      button.disabled = false;
+    }, 2000);
+  } catch (err) {
+    alert('Gagal mengunduh: ' + err.message);
+    button.innerHTML = originalHtml;
+    button.disabled = false;
+  }
+}
 const USER_ROLE = ${JSON.stringify(userRole)};
 const CURRENT_PREFIX = ${JSON.stringify(prefix)};
 const APP_ORIGIN = ${JSON.stringify(origin)};
@@ -1725,7 +1748,7 @@ searchInput.addEventListener('input', (e) => {
     <div class="file-actions">
       \${isFolder ? \`<a class="btn btn-tonal" href="/?prefix=\${encodeURIComponent(f.key)}">Open</a>\` : \`
         \${previewable ? \`<a class="btn btn-tonal" href="\${objectUrl(f.key)}" target="_blank">Preview</a>\` : ''}
-        <a class="btn btn-outlined" href="\${objectUrl(f.key, true)}">Download</a>
+        <button class="btn btn-outlined" data-key="\${escapeHtml(f.key)}" onclick="downloadViaShortLink(this, event)">Download</button>
         <button class="btn btn-outlined btn-curl" data-key="\${escapeHtml(f.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
         <button class="btn btn-outlined btn-curl" data-key="\${escapeHtml(f.key)}" onclick="copyDirectLink(this)"><span class="material-symbols-outlined icon">link</span> Link</button>
         \${IS_ADMIN && isEditableTextFile(f.key) ? \`<a class="btn btn-tonal" href="/edit?key=\${encodeURIComponent(f.key)}">Edit</a>\` : ''}

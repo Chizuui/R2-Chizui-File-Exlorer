@@ -24,13 +24,13 @@
 	"r2_buckets": [
 		{
 			"binding": "BUCKET",
-			"bucket_name": "chizui-files"
+			"bucket_name": "__BUCKET_NAME__"
 		}
 	],
 	"kv_namespaces": [
 		{
 			"binding": "STATS",
-			"id": "12441270b76d4ab1bd00c58af5112c0c"
+			"id": "__KV_NAMESPACE_ID__"
 		}
 	]
 }
