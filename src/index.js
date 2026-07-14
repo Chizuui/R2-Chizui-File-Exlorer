@@ -357,11 +357,107 @@ export default {
 
       const filename = key.split("/").pop() || "download";
       const signature = await sign(key, env.SECRET_KEY);
-      const downloadUrl = `${url.origin}/${encodeObjectPath(key)}?token=${signature}`;
+      const downloadUrl = `${url.origin}/download/${encodeObjectPath(key)}?token=${signature}`;
       
       const curlCommand = `curl -L -o "%temp%\\${filename}" "${downloadUrl}"`;
       return new Response(curlCommand, {
         headers: { "Content-Type": "text/plain; charset=UTF-8" }
+      });
+    }
+
+    // GET DIRECT DOWNLOAD LINK
+    if (url.pathname === "/download") {
+      const session = await getSession(request, env);
+      if (!session) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const key = url.searchParams.get("key");
+      if (!key) {
+        return new Response("Key required", { status: 400 });
+      }
+
+      const signature = await sign(key, env.SECRET_KEY);
+      const downloadUrl = `${url.origin}/download/${encodeObjectPath(key)}?token=${signature}`;
+      
+      return new Response(downloadUrl, {
+        headers: { "Content-Type": "text/plain; charset=UTF-8" }
+      });
+    }
+
+    // DIRECT DOWNLOAD BYPASSING LOGIN
+    if (url.pathname.startsWith("/download/")) {
+      const directPath = decodeURIComponent(url.pathname.slice(10));
+      if (!directPath) {
+        return new Response("File not found", { status: 404 });
+      }
+
+      const token = url.searchParams.get("token");
+      if (!token || !env.SECRET_KEY) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const expectedToken = await sign(directPath, env.SECRET_KEY);
+      if (token !== expectedToken) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const isDownload = url.searchParams.get("download") !== "0";
+      const range = request.headers.get("Range");
+      const object = request.method === "HEAD"
+        ? await env.BUCKET.head(directPath)
+        : await env.BUCKET.get(directPath, range && !isDownload ? { range: request.headers } : undefined);
+
+      if (!object) {
+        return new Response("File not found", { status: 404 });
+      }
+
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set("etag", object.httpEtag);
+      headers.set("Accept-Ranges", isDownload ? "none" : "bytes");
+
+      if (object.range && !isDownload) {
+        const rangeLength = object.range.length ?? object.size - object.range.offset;
+        headers.set("Content-Range", `bytes ${object.range.offset}-${object.range.offset + rangeLength - 1}/${object.size}`);
+        headers.set("Content-Length", String(rangeLength));
+      } else {
+        headers.delete("Content-Range");
+        headers.set("Content-Length", String(object.size));
+      }
+
+      const metadataContentType = headers.get("content-type");
+      const guessedContentType = guessContentType(directPath);
+      let contentType = !metadataContentType || metadataContentType === "application/octet-stream"
+        ? guessedContentType
+        : metadataContentType;
+
+      if (isEditableTextFile(directPath)) {
+        contentType = guessedContentType;
+      }
+
+      headers.set("Content-Type", contentType);
+
+      const dispositionType = isDownload || !isPreviewable(contentType, directPath)
+        ? "attachment"
+        : "inline";
+      headers.set("Content-Disposition", contentDisposition(dispositionType, directPath));
+      if (isDownload) {
+        headers.set("Cache-Control", "no-store");
+      }
+
+      const responseStatus = object.range && !isDownload ? 206 : 200;
+
+      if (request.method === "HEAD") {
+        return new Response(null, {
+          headers,
+          status: responseStatus
+        });
+      }
+
+      return new Response(object.body, { 
+        headers, 
+        status: responseStatus 
       });
     }
 
@@ -493,6 +589,7 @@ export default {
         ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
         <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
         <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
+        <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyDirectLink(this)"><span class="material-symbols-outlined icon">link</span> Link</button>
       `}
     </div>
   </td>
@@ -577,6 +674,7 @@ export default {
       ${previewable ? `<a class="btn btn-tonal" href="${objectUrl(url.origin, file.key)}" target="_blank">Preview</a>` : ""}
       <a class="btn btn-outlined" href="${objectUrl(url.origin, file.key, true)}">Download</a>
       <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
+      <button class="btn btn-outlined btn-curl" data-key="${escapeHtml(file.key)}" onclick="copyDirectLink(this)"><span class="material-symbols-outlined icon">link</span> Link</button>
       ${isAdminUser && isEditableTextFile(file.key) ? `<a class="btn btn-tonal" href="/edit?key=${encodeURIComponent(file.key)}">Edit</a>` : ""}
       ${isAdminUser ? `
       <form method="POST" action="/delete" onsubmit="return confirm('Hapus file ini?')">
@@ -1425,6 +1523,36 @@ async function copyCurlCommand(button) {
     button.disabled = false;
   }
 }
+async function copyDirectLink(button) {
+  const key = button.getAttribute('data-key');
+  if (!key) return;
+  const originalHtml = button.innerHTML;
+  try {
+    button.innerHTML = '<span class="material-symbols-outlined icon spin">sync</span> Loading...';
+    button.disabled = true;
+    const response = await fetch('/download?key=' + encodeURIComponent(key));
+    if (!response.ok) throw new Error('Gagal mengambil link');
+    const link = await response.text();
+    await navigator.clipboard.writeText(link);
+    
+    button.innerHTML = '<span class="material-symbols-outlined icon">check</span> Copied!';
+    const originalColor = button.style.color;
+    const originalBorder = button.style.borderColor;
+    button.style.color = '#B3F6B3';
+    button.style.borderColor = '#B3F6B3';
+    
+    setTimeout(() => {
+      button.innerHTML = originalHtml;
+      button.style.color = originalColor;
+      button.style.borderColor = originalBorder;
+      button.disabled = false;
+    }, 2000);
+  } catch (err) {
+    alert('Gagal menyalin link: ' + err.message);
+    button.innerHTML = originalHtml;
+    button.disabled = false;
+  }
+}
 const USER_ROLE = ${JSON.stringify(userRole)};
 const CURRENT_PREFIX = ${JSON.stringify(prefix)};
 const APP_ORIGIN = ${JSON.stringify(origin)};
@@ -1563,6 +1691,7 @@ searchInput.addEventListener('input', (e) => {
         \${previewable ? \`<a class="btn btn-tonal" href="\${objectUrl(f.key)}" target="_blank">Preview</a>\` : ''}
         <a class="btn btn-outlined" href="\${objectUrl(f.key, true)}">Download</a>
         <button class="btn btn-outlined btn-curl" data-key="\${escapeHtml(f.key)}" onclick="copyCurlCommand(this)"><span class="material-symbols-outlined icon">terminal</span> Curl</button>
+        <button class="btn btn-outlined btn-curl" data-key="\${escapeHtml(f.key)}" onclick="copyDirectLink(this)"><span class="material-symbols-outlined icon">link</span> Link</button>
         \${IS_ADMIN && isEditableTextFile(f.key) ? \`<a class="btn btn-tonal" href="/edit?key=\${encodeURIComponent(f.key)}">Edit</a>\` : ''}
       \`}
       \${IS_ADMIN ? \`
