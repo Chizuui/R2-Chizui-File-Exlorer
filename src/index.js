@@ -356,9 +356,21 @@ export default {
       }
 
       const filename = key.split("/").pop() || "download";
-      const signature = await sign(key, env.SECRET_KEY);
-      const downloadUrl = `${url.origin}/download/${encodeObjectPath(key)}?token=${signature}`;
       
+      let shortId = "";
+      if (env.STATS) {
+        shortId = await env.STATS.get(`rev_short:${key}`);
+      }
+
+      if (!shortId) {
+        shortId = generateShortId();
+        if (env.STATS) {
+          await env.STATS.put(`short:${shortId}`, key);
+          await env.STATS.put(`rev_short:${key}`, shortId);
+        }
+      }
+
+      const downloadUrl = `${url.origin}/download/${shortId}`;
       const curlCommand = `curl -L -o "%temp%\\${filename}" "${downloadUrl}"`;
       return new Response(curlCommand, {
         headers: { "Content-Type": "text/plain; charset=UTF-8" }
@@ -377,9 +389,20 @@ export default {
         return new Response("Key required", { status: 400 });
       }
 
-      const signature = await sign(key, env.SECRET_KEY);
-      const downloadUrl = `${url.origin}/download/${encodeObjectPath(key)}?token=${signature}`;
-      
+      let shortId = "";
+      if (env.STATS) {
+        shortId = await env.STATS.get(`rev_short:${key}`);
+      }
+
+      if (!shortId) {
+        shortId = generateShortId();
+        if (env.STATS) {
+          await env.STATS.put(`short:${shortId}`, key);
+          await env.STATS.put(`rev_short:${key}`, shortId);
+        }
+      }
+
+      const downloadUrl = `${url.origin}/download/${shortId}`;
       return new Response(downloadUrl, {
         headers: { "Content-Type": "text/plain; charset=UTF-8" }
       });
@@ -387,19 +410,32 @@ export default {
 
     // DIRECT DOWNLOAD BYPASSING LOGIN
     if (url.pathname.startsWith("/download/")) {
-      const directPath = decodeURIComponent(url.pathname.slice(10));
-      if (!directPath) {
-        return new Response("File not found", { status: 404 });
-      }
+      const rest = url.pathname.slice(10);
+      const isShortId = /^[0-9a-fA-F]{24}$/.test(rest);
 
-      const token = url.searchParams.get("token");
-      if (!token || !env.SECRET_KEY) {
-        return new Response("Unauthorized", { status: 401 });
-      }
+      let directPath = "";
+      if (isShortId) {
+        if (env.STATS) {
+          directPath = await env.STATS.get(`short:${rest}`) || "";
+        }
+        if (!directPath) {
+          return new Response("Link expired or invalid", { status: 404 });
+        }
+      } else {
+        directPath = decodeURIComponent(rest);
+        if (!directPath) {
+          return new Response("File not found", { status: 404 });
+        }
 
-      const expectedToken = await sign(directPath, env.SECRET_KEY);
-      if (token !== expectedToken) {
-        return new Response("Unauthorized", { status: 401 });
+        const token = url.searchParams.get("token");
+        if (!token || !env.SECRET_KEY) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+
+        const expectedToken = await sign(directPath, env.SECRET_KEY);
+        if (token !== expectedToken) {
+          return new Response("Unauthorized", { status: 401 });
+        }
       }
 
       const isDownload = url.searchParams.get("download") !== "0";
@@ -2474,4 +2510,10 @@ function encodeR2ObjectKey(key) {
     .split("/")
     .map(part => encodeURIComponent(part))
     .join("/");
+}
+
+function generateShortId() {
+  const arr = new Uint8Array(12);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
